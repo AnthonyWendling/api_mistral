@@ -26,3 +26,15 @@ class SearchResult(BaseModel):
     text: str
     metadata: dict
     distance: float | None = None
+
+
+class RAGRequest(BaseModel):
+    query: str = Field(..., min_length=1)
+    collection_id: str = Field(..., min_length=1)
+    top_k: int = Field(5, ge=1, le=20)
+    system_prompt: str | None = None
+
+
+class RAGResponse(BaseModel):
+    answer: str
+    sources: list[SearchResult]

@@ -103,6 +103,43 @@ def add_documents(
     return len(chunks)
 
 
+def list_documents(collection_id: str, limit_chunks: int = 2000) -> list[dict]:
+    """Liste les documents uniques de la collection (document_id, source_file, file_url)."""
+    coll = get_collection(collection_id)
+    # Récupérer un échantillon de chunks pour extraire les métadonnées document
+    try:
+        result = coll.get(include=["metadatas"], limit=min(limit_chunks, 5000))
+    except TypeError:
+        result = coll.get(include=["metadatas"])
+    if not result or not result.get("metadatas"):
+        return []
+    seen = set()
+    docs = []
+    for meta in result["metadatas"]:
+        if not meta:
+            continue
+        doc_id = meta.get("document_id") or meta.get("source_file") or ""
+        if not doc_id or doc_id in seen:
+            continue
+        seen.add(doc_id)
+        doc = {
+            "document_id": doc_id,
+            "source_file": meta.get("source_file", ""),
+            "file_url": meta.get("file_url", ""),
+            "date": meta.get("date", ""),
+        }
+        if meta.get("folder_path"):
+            doc["folder_path"] = meta["folder_path"]
+        if meta.get("sharepoint_item_id"):
+            doc["sharepoint_item_id"] = meta["sharepoint_item_id"]
+        if meta.get("drive_id"):
+            doc["drive_id"] = meta["drive_id"]
+        if meta.get("site_id"):
+            doc["site_id"] = meta["site_id"]
+        docs.append(doc)
+    return docs
+
+
 def search(collection_id: str, query: str, top_k: int = 10) -> list[dict]:
     coll = get_collection(collection_id)
     q_embed = embed_query(query)

@@ -4,7 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routes import analyze, vectors
+from app.routes import analyze, vectors, webhooks
 
 
 @asynccontextmanager
@@ -24,6 +24,7 @@ app.add_middleware(
 
 app.include_router(analyze.router, prefix="/analyze", tags=["analyze"])
 app.include_router(vectors.router, prefix="/vectors", tags=["vectors"])
+app.include_router(webhooks.router, prefix="/webhooks", tags=["webhooks"])
 
 
 @app.get("/health")

@@ -10,6 +10,7 @@ from app.services.vector_store_service import (
     add_documents,
     create_collection,
     list_collections,
+    list_documents,
     search as vector_search,
 )
 
@@ -52,6 +53,10 @@ async def index_document(
     file: Annotated[UploadFile | None, File()] = None,
     file_url: Annotated[str | None, Form()] = None,
     document_id: Annotated[str | None, Form()] = None,
+    folder_path: Annotated[str | None, Form()] = None,
+    sharepoint_item_id: Annotated[str | None, Form()] = None,
+    drive_id: Annotated[str | None, Form()] = None,
+    site_id: Annotated[str | None, Form()] = None,
 ):
     if file and file.filename:
         content = await file.read()
@@ -73,6 +78,16 @@ async def index_document(
     if not text:
         return {"collection_id": collection_id, "indexed_chunks": 0, "message": "Aucun texte extrait."}
 
+    meta = {}
+    if folder_path:
+        meta["folder_path"] = folder_path
+    if sharepoint_item_id:
+        meta["sharepoint_item_id"] = sharepoint_item_id
+    if drive_id:
+        meta["drive_id"] = drive_id
+    if site_id:
+        meta["site_id"] = site_id
+
     try:
         indexed = add_documents(
             collection_id,
@@ -80,6 +95,7 @@ async def index_document(
             document_id=document_id,
             source_file=filename,
             file_url=file_url or "",
+            metadata_per_doc=meta if meta else None,
             deduplicate=True,
         )
     except Exception as e:
@@ -89,6 +105,19 @@ async def index_document(
         raise HTTPException(502, f"Erreur indexation (embedding ou base vectorielle): {err_msg}")
 
     return {"collection_id": collection_id, "indexed_chunks": indexed}
+
+
+@router.get("/collections/{collection_id}/documents")
+def list_documents_route(collection_id: str, limit: int = 2000):
+    """Liste les documents uniques de la collection (source_file, file_url) pour savoir quoi télécharger."""
+    try:
+        docs = list_documents(collection_id, limit_chunks=limit)
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err.lower() or "not found" in err.lower():
+            raise HTTPException(404, f"Collection non trouvée: {collection_id}")
+        raise HTTPException(502, str(e))
+    return {"documents": docs, "collection_id": collection_id}
 
 
 @router.post("/collections/{collection_id}/search")

@@ -228,8 +228,12 @@ Indexe un document dans une collection : extraction du texte → découpage en c
 | `file` | Fichier | Oui* | Fichier à indexer. |
 | `file_url` | Chaîne | Oui* | URL du document à télécharger. |
 | `document_id` | Chaîne | Non | Identifiant pour déduplication (évite de ré-indexer le même document). |
+| `folder_path` | Chaîne | Non | Chemin du dossier (ex. SharePoint) pour retrouver le fichier plus tard. |
+| `sharepoint_item_id` | Chaîne | Non | ID de l’item (Graph API) pour télécharger le fichier via n8n/SharePoint. |
+| `drive_id` | Chaîne | Non | ID du lecteur (document library). |
+| `site_id` | Chaîne | Non | ID du site SharePoint. |
 
-\* Il faut **soit** `file`, **soit** `file_url`.
+\* Il faut **soit** `file`, **soit** `file_url`. Les champs `folder_path`, `sharepoint_item_id`, `drive_id`, `site_id` permettent de retrouver et télécharger le bon fichier depuis SharePoint après une recherche (voir **N8N-SHAREPOINT-RECHERCHE.md**).
 
 **Réponse (200)**  
 ```json
@@ -304,6 +308,163 @@ Recherche par similarité sémantique dans une collection : la requête est tran
 **Erreurs**
 
 - **404** : Collection inexistante.
+
+---
+
+### 5.7 Analyse avec prompt personnalisé (webhook)
+
+**POST /analyze/with-prompt**
+
+Envoie un **document** (fichier ou `file_url`) + un **prompt** personnalisé → extraction du texte → Mistral répond en s’appuyant sur le document. Option : indexation dans une collection.
+
+**Corps :** `multipart/form-data`
+
+| Champ | Type | Obligatoire | Description |
+|-------|------|-------------|-------------|
+| `prompt` | Chaîne | Oui | Instruction / question pour l’analyse (ex. « Résume en 3 points », « Extrais les dates importantes »). |
+| `file` | Fichier | Oui* | Fichier à analyser. |
+| `file_url` | Chaîne | Oui* | URL du document. |
+| `system_prompt` | Chaîne | Non | Prompt système Mistral (sinon valeur par défaut). |
+| `add_to_collection_id` | Chaîne | Non | Indexer le texte dans cette collection. |
+| `document_id` | Chaîne | Non | Pour déduplication. |
+
+\* Il faut **soit** `file`, **soit** `file_url`.
+
+**Réponse (200)**  
+```json
+{
+  "analysis": "Réponse de Mistral selon ton prompt…",
+  "prompt": "Résume en 3 points",
+  "add_to_collection_id": "ma-base",
+  "indexed_chunks": 5
+}
+```
+
+---
+
+### 5.8 Liste des documents d’une collection
+
+**GET /vectors/collections/{collection_id}/documents**
+
+Retourne la liste des **documents uniques** indexés dans la collection (pour savoir quoi télécharger depuis SharePoint ou ailleurs).
+
+**Paramètre de chemin** : `collection_id`.
+
+**Paramètre de requête** : `limit` (optionnel, défaut 2000) — nombre max de chunks scannés pour dédupliquer les documents.
+
+**Réponse (200)**  
+```json
+{
+  "collection_id": "test-n8n",
+  "documents": [
+    {
+      "document_id": "abc123",
+      "source_file": "Rapport.pdf",
+      "file_url": "https://…"
+    }
+  ]
+}
+```
+
+---
+
+### 5.9 Webhook RAG (question → réponse fiable)
+
+**POST /webhooks/rag**
+
+Envoie une **question** + **collection_id** → recherche vectorielle → les meilleurs chunks sont envoyés à Mistral comme contexte → **réponse** basée uniquement sur tes documents (donnée fiable).
+
+**Corps (JSON)**  
+```json
+{
+  "query": "Quelle est la procédure de télétravail ?",
+  "collection_id": "test-n8n",
+  "top_k": 5,
+  "system_prompt": "Réponds uniquement à partir du contexte. Réponse courte."
+}
+```
+
+| Champ | Type | Obligatoire | Description |
+|-------|------|-------------|-------------|
+| `query` | Chaîne | Oui | Question. |
+| `collection_id` | Chaîne | Oui | Collection à interroger. |
+| `top_k` | Entier | Non | Nombre de chunks utilisés comme contexte (1–20, défaut 5). |
+| `system_prompt` | Chaîne | Non | Prompt système Mistral (optionnel). |
+
+**Réponse (200)**  
+```json
+{
+  "answer": "Réponse générée par Mistral à partir des chunks…",
+  "sources": [
+    {
+      "chunk_id": "…",
+      "text": "…",
+      "metadata": { "source_file": "…", "file_url": "…" },
+      "distance": 0.42
+    }
+  ]
+}
+```
+
+---
+
+### 5.10 Webhook Recherche + documents pour téléchargement
+
+**POST /webhooks/search-documents**
+
+Recherche sémantique dans une collection puis retourne les **chunks** + la liste des **documents uniques** concernés (`source_file`, `file_url`) pour savoir quel fichier télécharger (ex. depuis SharePoint).
+
+**Corps (JSON)**  
+```json
+{
+  "query": "template mail Power Automate",
+  "collection_id": "test-n8n",
+  "top_k": 10
+}
+```
+
+**Réponse (200)**  
+```json
+{
+  "query": "template mail Power Automate",
+  "collection_id": "test-n8n",
+  "results": [ { "chunk_id": "…", "text": "…", "metadata": {…}, "distance": 0.59 } ],
+  "documents": [
+    { "document_id": "…", "source_file": "MailTemplate_FINAL.docx", "file_url": "https://…" }
+  ]
+}
+```
+
+Utilisation : prendre `documents[].file_url` ou `source_file` pour déclencher un téléchargement dans n8n (SharePoint, etc.).
+
+---
+
+### 5.11 Webhook Suggestion de collections (d’après les dossiers SharePoint)
+
+**POST /webhooks/suggest-collections**
+
+Envoie la **liste de tous les dossiers** SharePoint (path + name) → l’**IA propose** les meilleures **collections** à créer dans l’API (nom, description, quels dossiers y affecter) pour que l’IA apprenne de façon structurée. À utiliser **avant** de remplir les collections : d’abord récupérer les dossiers, appeler ce webhook, créer les collections proposées, puis remplir chaque collection.
+
+**Corps (JSON)**  
+```json
+{
+  "folders": [
+    { "path": "/Documents/Affaires", "name": "Affaires" },
+    { "path": "/Documents/Contrats", "name": "Contrats" }
+  ]
+}
+```
+
+| Champ | Type | Description |
+|-------|------|-------------|
+| `folders` | Tableau | Liste des dossiers (path + name). |
+
+**Réponse (200)**  
+- `suggestion` : texte brut de l’IA.  
+- `collections` : si l’IA a renvoyé du JSON valide, tableau du type `[{ "name": "nom-collection", "description": "...", "folder_paths": ["/path1", ...] }]`.  
+- `folder_count` : nombre de dossiers envoyés.
+
+Voir **N8N-SYNC-SHAREPOINT-VERS-COLLECTION.md** pour le flux complet (récupérer dossiers → suggest-collections → créer collections → remplir).
 
 ---
 
