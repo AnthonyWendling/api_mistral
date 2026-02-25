@@ -1,0 +1,74 @@
+{
+  "name": "Test API Mistral - Collections et Recherche",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "manual-trigger",
+      "name": "Déclencheur manuel",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [240, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://apimistral-production.up.railway.app/vectors/collections",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"name\": \"test-n8n\"\n}"
+      },
+      "id": "create-collection",
+      "name": "Créer collection",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://apimistral-production.up.railway.app/vectors/collections"
+      },
+      "id": "list-collections",
+      "name": "Lister collections",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [680, 300]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://apimistral-production.up.railway.app/vectors/collections/test-n8n/search",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"query\": \"De quoi parle le document ?\",\n  \"top_k\": 5\n}"
+      },
+      "id": "search",
+      "name": "Recherche vectorielle",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [900, 300]
+    }
+  ],
+  "connections": {
+    "Déclencheur manuel": {
+      "main": [
+        [{ "node": "Créer collection", "type": "main", "index": 0 }]
+      ]
+    },
+    "Créer collection": {
+      "main": [
+        [{ "node": "Lister collections", "type": "main", "index": 0 }]
+      ]
+    },
+    "Lister collections": {
+      "main": [
+        [{ "node": "Recherche vectorielle", "type": "main", "index": 0 }]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {},
+  "meta": {
+    "templateCredsSetupCompleted": true
+  }
+}

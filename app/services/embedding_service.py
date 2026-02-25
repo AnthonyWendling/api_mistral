@@ -13,7 +13,7 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not texts:
         return []
     client = get_client()
-    response = client.embeddings.create(model=EMBED_MODEL, input=texts)
+    response = client.embeddings.create(model=EMBED_MODEL, inputs=texts)
     return [e.embedding for e in response.data]
 
 
