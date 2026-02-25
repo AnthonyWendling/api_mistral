@@ -30,13 +30,20 @@ def list_collections_route():
 
 
 async def _get_file_from_url(file_url: str) -> tuple[bytes, str]:
-    async with httpx.AsyncClient(follow_redirects=True) as client:
-        r = await client.get(file_url)
-        r.raise_for_status()
-        if len(r.content) > MAX_BYTES:
-            raise HTTPException(400, f"Fichier trop volumineux (max {settings.max_file_size_mb} Mo)")
-        filename = r.url.path.split("/")[-1] or "document"
-        return r.content, filename
+    try:
+        async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+            r = await client.get(file_url)
+            r.raise_for_status()
+            if len(r.content) > MAX_BYTES:
+                raise HTTPException(400, f"Fichier trop volumineux (max {settings.max_file_size_mb} Mo)")
+            filename = r.url.path.split("/")[-1] or "document"
+            if not filename or filename == "/":
+                filename = "document"
+            return r.content, filename
+    except httpx.HTTPStatusError as e:
+        raise HTTPException(502, f"Impossible de télécharger le fichier (URL renvoie {e.response.status_code})")
+    except httpx.RequestError as e:
+        raise HTTPException(502, f"Impossible d'accéder à l'URL: {str(e)}")
 
 
 @router.post("/collections/{collection_id}/index")
@@ -60,6 +67,8 @@ async def index_document(
         text = extract_text(content, filename=filename)
     except ValueError as e:
         raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Erreur lors de l'extraction du texte: {str(e)}")
 
     if not text:
         return {"collection_id": collection_id, "indexed_chunks": 0, "message": "Aucun texte extrait."}
@@ -74,7 +83,10 @@ async def index_document(
             deduplicate=True,
         )
     except Exception as e:
-        raise HTTPException(404, f"Collection non trouvée ou erreur: {e}")
+        err_msg = str(e)
+        if "does not exist" in err_msg.lower() or "not found" in err_msg.lower():
+            raise HTTPException(404, f"Collection non trouvée: {collection_id}")
+        raise HTTPException(502, f"Erreur indexation (embedding ou base vectorielle): {err_msg}")
 
     return {"collection_id": collection_id, "indexed_chunks": indexed}
 
