@@ -7,7 +7,7 @@ import json
 import re
 from urllib.parse import urlparse
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from app.schemas.requests_responses import RAGRequest, RAGResponse, SearchResult
@@ -39,12 +39,36 @@ class SearchDocumentsRequest(BaseModel):
 
 
 @router.post("/suggest-collections")
-def suggest_collections_webhook(payload: SuggestCollectionsRequest):
+async def suggest_collections_webhook(request: Request):
     """
     Webhook : envoie la liste de tous les dossiers SharePoint → l'IA propose les meilleures
     collections à créer dans l'API (nom, description, quels dossiers y affecter) pour que
     l'IA apprenne de façon structurée.
+    Accepte soit un objet { "folders": [...] } soit directement un tableau [ {...}, ... ].
     """
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(422, "Body must be valid JSON")
+
+    if isinstance(body, list):
+        folders_list = body
+    elif isinstance(body, dict) and "folders" in body:
+        folders_list = body["folders"]
+    else:
+        raise HTTPException(
+            422,
+            'Body must be { "folders": [ { "name", "webUrl"?, "id"? }, ... ] } or directly an array of folder objects.',
+        )
+
+    if not folders_list:
+        raise HTTPException(422, "At least one folder required")
+
+    try:
+        folders = [FolderItem.model_validate(f) for f in folders_list]
+    except Exception as e:
+        raise HTTPException(422, f"Invalid folder item: {e}")
+
     def _path_or_id(f: FolderItem) -> str:
         if f.path:
             return f.path
@@ -52,7 +76,7 @@ def suggest_collections_webhook(payload: SuggestCollectionsRequest):
             return urlparse(f.web_url).path or f.name
         return f.id or f.name
 
-    folders_text = "\n".join(f"{_path_or_id(f)} | {f.name}" for f in payload.folders)
+    folders_text = "\n".join(f"{_path_or_id(f)} | {f.name}" for f in folders)
     try:
         raw = suggest_collections_from_folders(folders_text)
     except Exception as e:
@@ -72,7 +96,7 @@ def suggest_collections_webhook(payload: SuggestCollectionsRequest):
     return {
         "suggestion": raw,
         "collections": collections_parsed,
-        "folder_count": len(payload.folders),
+        "folder_count": len(folders),
     }
 
 
