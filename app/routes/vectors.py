@@ -57,6 +57,9 @@ async def index_document(
     sharepoint_item_id: Annotated[str | None, Form()] = None,
     drive_id: Annotated[str | None, Form()] = None,
     site_id: Annotated[str | None, Form()] = None,
+    nocodb_record_id: Annotated[str | None, Form()] = None,
+    nocodb_table_name: Annotated[str | None, Form()] = None,
+    nocodb_base_id: Annotated[str | None, Form()] = None,
 ):
     if file and file.filename:
         content = await file.read()
@@ -87,6 +90,12 @@ async def index_document(
         meta["drive_id"] = drive_id
     if site_id:
         meta["site_id"] = site_id
+    if nocodb_record_id:
+        meta["nocodb_record_id"] = nocodb_record_id
+    if nocodb_table_name:
+        meta["nocodb_table_name"] = nocodb_table_name
+    if nocodb_base_id:
+        meta["nocodb_base_id"] = nocodb_base_id
 
     try:
         indexed = add_documents(

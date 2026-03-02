@@ -176,6 +176,12 @@ def search_documents_webhook(payload: SearchDocumentsRequest):
                 doc["drive_id"] = meta["drive_id"]
             if meta.get("site_id"):
                 doc["site_id"] = meta["site_id"]
+            if meta.get("nocodb_record_id"):
+                doc["nocodb_record_id"] = meta["nocodb_record_id"]
+            if meta.get("nocodb_table_name"):
+                doc["nocodb_table_name"] = meta["nocodb_table_name"]
+            if meta.get("nocodb_base_id"):
+                doc["nocodb_base_id"] = meta["nocodb_base_id"]
             documents.append(doc)
 
     return {

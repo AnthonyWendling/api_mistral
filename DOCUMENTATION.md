@@ -27,6 +27,7 @@ Cette API permet d’**analyser des documents** (PDF, Word, Excel, PPTX, images)
 | **Collections vectorielles** | Création et liste de bases vectorielles (une collection = une base Chroma). |
 | **Indexation** | Ajout de documents dans une collection (extraction → découpage en chunks → embeddings Mistral → stockage) sans poser de question à l’agent. |
 | **Recherche** | Requête en langage naturel → embedding → recherche par similarité → retour des passages les plus pertinents (pour RAG, FAQ, etc.). |
+| **Transcription audio** | Fichier ou URL audio → transcription Mistral (Voxtral) → texte + segments optionnels (diarisation, timestamps). Option : analyse de réunion (résumé, décisions, actions). |
 
 **Flux typique :**
 
@@ -85,6 +86,8 @@ Toutes les options sont pilotées par des **variables d’environnement** (ou un
 | `CHROMA_DATA_PATH` | Non | Dossier de persistance Chroma (sur Railway : volume, ex. `/data/chroma`) | `./data/chroma` |
 | `LOG_LEVEL` | Non | Niveau de log (DEBUG, INFO, WARNING, ERROR) | `INFO` |
 | `MAX_FILE_SIZE_MB` | Non | Taille max d’un fichier en Mo | `50` |
+| `MAX_AUDIO_SIZE_MB` | Non | Taille max d’un fichier audio en Mo (transcription) | `100` |
+| `TRANSCRIPTION_MODEL` | Non | Modèle Mistral pour la transcription (ex. `voxtral-mini-latest`) | `voxtral-mini-latest` |
 | `ALLOWED_ORIGINS` | Non | Origines CORS (séparées par des virgules, ou `*`) | `*` |
 | `CHUNK_SIZE` | Non | Nombre de caractères par chunk pour l’indexation | `512` |
 | `CHUNK_OVERLAP` | Non | Chevauchement entre deux chunks (caractères) | `128` |
@@ -232,8 +235,11 @@ Indexe un document dans une collection : extraction du texte → découpage en c
 | `sharepoint_item_id` | Chaîne | Non | ID de l’item (Graph API) pour télécharger le fichier via n8n/SharePoint. |
 | `drive_id` | Chaîne | Non | ID du lecteur (document library). |
 | `site_id` | Chaîne | Non | ID du site SharePoint. |
+| `nocodb_record_id` | Chaîne | Non | ID de l’enregistrement NocoDB (pour retrouver le record après recherche). |
+| `nocodb_table_name` | Chaîne | Non | Nom de la table NocoDB. |
+| `nocodb_base_id` | Chaîne | Non | ID de la base NocoDB. |
 
-\* Il faut **soit** `file`, **soit** `file_url`. Les champs `folder_path`, `sharepoint_item_id`, `drive_id`, `site_id` permettent de retrouver et télécharger le bon fichier depuis SharePoint après une recherche (voir **N8N-SHAREPOINT-RECHERCHE.md**).
+\* Il faut **soit** `file`, **soit** `file_url`. Les champs SharePoint permettent de retrouver le fichier après recherche (voir **N8N-SHAREPOINT-RECHERCHE.md**). Pour NocoDB, utiliser `nocodb_record_id`, `nocodb_table_name`, `nocodb_base_id` (voir **GUIDE-NOCODB-INDEXATION.md**).
 
 **Réponse (200)**  
 ```json
@@ -468,6 +474,99 @@ Voir **N8N-SYNC-SHAREPOINT-VERS-COLLECTION.md** pour le flux complet (récupére
 
 ---
 
+### 5.12 Transcription audio et analyse de réunions
+
+Les endpoints sous le préfixe **`/audio`** permettent de **transcrire des fichiers audio** (réunions Teams, enregistrements, podcasts) via l’API Mistral (Voxtral), avec option de **streaming** (SSE) et d’**analyse de réunion** (résumé, décisions, actions).
+
+**Cas d’usage :** exporter une réunion Teams en MP3 (ou autre format supporté), envoyer le fichier ou une URL vers l’API → transcription → optionnellement analyse structurée (résumé, décisions, actions à faire).
+
+#### POST /audio/transcribe
+
+Transcription audio complète. Entrée : fichier uploadé (multipart) **ou** URL publique (`file_url`).
+
+**Corps :** `multipart/form-data`
+
+| Champ | Type | Obligatoire | Description |
+|-------|------|-------------|-------------|
+| `file` | Fichier | Oui* | Fichier audio (MP3, WAV, etc.). |
+| `file_url` | Chaîne | Oui* | URL publique du fichier audio à transcrire. |
+| `language` | Chaîne | Non | Code langue (ex. `fr`, `en`) pour améliorer la précision. |
+| `diarize` | Booléen | Non | Activer la diarisation (identification des locuteurs). Par défaut `false`. |
+| `timestamp_granularities` | Chaîne | Non | Granularité des timestamps : `segment`, `word` ou `segment,word`. |
+| `context_bias` | Chaîne | Non | Mots ou expressions (séparés par des virgules) pour guider la reconnaissance (noms, termes métier). |
+| `analyze_meeting` | Booléen | Non | Si `true`, en plus de la transcription, retourne une analyse (résumé, décisions, actions). Par défaut `false`. |
+
+\* Il faut **soit** `file`, **soit** `file_url`.
+
+**Réponse (200) – sans analyse :**  
+```json
+{
+  "text": "Texte transcrit complet...",
+  "language": "fr",
+  "model": "voxtral-mini-2507",
+  "segments": [],
+  "usage": { "prompt_audio_seconds": 120, "total_tokens": 500, ... }
+}
+```
+
+Avec `diarize=true` et `timestamp_granularities=segment`, `segments` contient des objets avec `text`, `start`, `end`, `speaker_id`.
+
+**Réponse (200) – avec `analyze_meeting=true` :**  
+```json
+{
+  "transcript": { "text": "...", "language": "fr", "segments": [...], "usage": {...} },
+  "analysis": "1) Résumé : ... 2) Décisions : ... 3) Actions : ..."
+}
+```
+
+**Exemple cURL (fichier) :**  
+```bash
+curl -X POST "http://localhost:8000/audio/transcribe" \
+  -H "Content-Type: multipart/form-data" \
+  -F "file=@reunion_teams.mp3" \
+  -F "language=fr" \
+  -F "diarize=true" \
+  -F "analyze_meeting=true"
+```
+
+**Exemple cURL (URL) :**  
+```bash
+curl -X POST "http://localhost:8000/audio/transcribe" \
+  -F "file_url=https://example.com/audio/reunion.mp3" \
+  -F "language=fr" \
+  -F "analyze_meeting=true"
+```
+
+Limite de taille : `MAX_AUDIO_SIZE_MB` (par défaut 100 Mo).
+
+#### POST /audio/transcribe/stream
+
+Mêmes paramètres que `POST /audio/transcribe`, mais la réponse est un **flux SSE** (Server-Sent Events) : les événements de transcription sont envoyés au fur et à mesure.
+
+**Réponse :** `Content-Type: text/event-stream`. Chaque ligne `data: {...}` contient un événement Mistral (segments, texte partiel, etc.).
+
+Utile pour des enregistrements longs ou une intégration temps réel côté client.
+
+#### POST /audio/analyze-meeting
+
+Analyse un **texte de transcription déjà disponible** (sans refaire la transcription). Utile en deux temps : d’abord récupérer la transcription (via `/audio/transcribe` ou un autre outil), puis appeler cet endpoint avec le texte pour obtenir le résumé, les décisions et les actions.
+
+**Corps (JSON)**  
+```json
+{
+  "transcript_text": "Texte complet de la transcription de la réunion..."
+}
+```
+
+**Réponse (200)**  
+```json
+{
+  "analysis": "1) Résumé : ... 2) Décisions : ... 3) Actions : ..."
+}
+```
+
+---
+
 ## 6. Formats de fichiers supportés
 
 | Type | Extensions | Méthode |
@@ -477,6 +576,7 @@ Voir **N8N-SYNC-SHAREPOINT-VERS-COLLECTION.md** pour le flux complet (récupére
 | Excel | `.xlsx` | openpyxl (texte des cellules) |
 | PowerPoint | `.pptx` | python-pptx (texte des slides) |
 | Images | `.png`, `.jpg`, `.jpeg`, `.gif` | OCR (Tesseract) |
+| Audio (transcription) | `.mp3`, `.wav`, `.m4a`, `.webm`, etc. | API Mistral Voxtral (`/audio/transcribe`) |
 
 La détection se fait par **extension** du fichier ou par **Content-Type** si l’URL ne contient pas d’extension. Tout autre type renvoie une erreur **400** avec un message explicite.
 
