@@ -264,9 +264,8 @@
     hideMessage("#create-message");
   });
 
-  $("#btn-cancel-create").addEventListener("click", () => {
-    showRightPanel("create");
-  });
+  const btnCancelCreate = $("#btn-cancel-create");
+  if (btnCancelCreate) btnCancelCreate.addEventListener("click", () => showRightPanel("create"));
 
   const btnSources = $("#btn-sources");
   if (btnSources) btnSources.addEventListener("click", () => showRightPanel("sources"));
