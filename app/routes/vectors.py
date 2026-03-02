@@ -4,7 +4,7 @@ import httpx
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 
 from app.config import settings
-from app.schemas.requests_responses import CollectionCreate, CollectionOut, SearchRequest, SearchResult
+from app.schemas.requests_responses import CollectionCreate, CollectionOut, CollectionsBulkCreate, SearchRequest, SearchResult
 from app.services.extraction import extract_text
 from app.services.vector_store_service import (
     add_documents,
@@ -68,6 +68,19 @@ def list_category_collection_specs():
     appeler POST /collections/ensure avec le nom, ou POST /collections si l'id n'est pas dans la liste).
     """
     return {"specs": get_all_category_collection_specs()}
+
+
+@router.post("/collections/bulk")
+def bulk_create_collections_route(payload: CollectionsBulkCreate):
+    """
+    Crée plusieurs collections en une fois. Body : { "collections": [ { "name": "...", "parent_id": "..."? }, ... ] }.
+    Retourne la liste des collections créées (id, name, parent_id).
+    """
+    created = []
+    for c in payload.collections:
+        id_ = create_collection(c.name, parent_id=c.parent_id)
+        created.append(CollectionOut(id=id_, name=c.name, parent_id=c.parent_id))
+    return {"created": created, "count": len(created)}
 
 
 @router.post("/collections/ensure")

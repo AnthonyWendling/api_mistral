@@ -7,9 +7,34 @@
   <link rel="stylesheet" href="/static/css/style.css" />
 </head>
 <body>
+  <div id="login-screen" class="login-screen">
+    <div class="login-box">
+      <h2>Accès à l'interface</h2>
+      <p class="hint">Saisissez le code et le mot de passe.</p>
+      <form id="form-login" class="form-login">
+        <div class="form-group">
+          <label for="input-login-code">Code</label>
+          <input type="text" id="input-login-code" class="input-inline" placeholder="Code" required autocomplete="username" />
+        </div>
+        <div class="form-group">
+          <label for="input-login-password">Mot de passe</label>
+          <input type="password" id="input-login-password" class="input-inline" placeholder="Mot de passe" required autocomplete="current-password" />
+        </div>
+        <button type="submit" class="btn btn-primary">Se connecter</button>
+      </form>
+      <div id="login-message" class="message" hidden></div>
+    </div>
+  </div>
+
+  <div id="app-content" class="app-content" hidden>
   <header class="header">
-    <h1>Collections vectorielles – IA Mistral</h1>
-    <p class="subtitle">Collections et sous-collections pour la recherche vectorielle (RAG, LLM Mistral). Créez, indexez des fichiers, testez la recherche.</p>
+    <div class="header-top">
+      <div>
+        <h1>Collections vectorielles – IA Mistral</h1>
+        <p class="subtitle">Collections et sous-collections pour la recherche vectorielle (RAG, LLM Mistral). Créez, indexez des fichiers, testez la recherche.</p>
+      </div>
+      <a href="/docs" target="_blank" rel="noopener" class="btn btn-docs">Documentation API (Swagger)</a>
+    </div>
   </header>
 
   <main class="main layout-two-cols">
@@ -46,6 +71,14 @@
         </div>
       </form>
       <div id="create-message" class="message" hidden></div>
+
+      <div class="subsection">
+        <h3>Créer plusieurs collections (JSON)</h3>
+        <p class="hint">Collez un JSON : liste de noms <code>["Nom 1", "Nom 2"]</code> ou liste d'objets <code>[{"name": "Nom 1"}, {"name": "Sous", "parent_id": "nom-1"}]</code>.</p>
+        <textarea id="input-collections-json" class="input-textarea" rows="6" placeholder='["Contraintes réglementaires", "Docs projet X"]'></textarea>
+        <button type="button" id="btn-bulk-create-collections" class="btn btn-primary">Créer les collections</button>
+        <div id="bulk-create-message" class="message" hidden></div>
+      </div>
     </section>
 
     <section id="section-detail" class="panel detail-panel right-panel" hidden>
@@ -67,14 +100,22 @@
 
       <div class="subsection">
         <h3>Ajouter un fichier</h3>
-        <p class="hint">Glissez-déposez un fichier ou cliquez pour sélectionner (PDF, DOCX, TXT, etc.).</p>
-        <form id="form-upload" class="upload-zone">
-          <input type="file" id="input-file" name="file" accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,.pptx,.ppt,.png,.jpg,.jpeg" />
-          <label for="input-file" class="upload-label">
-            <span id="upload-placeholder">Choisir un fichier</span>
-          </label>
-          <input type="text" id="input-document-id" class="input-inline" placeholder="ID document (optionnel)" />
-          <button type="submit" id="btn-upload" class="btn btn-primary" disabled>Indexer</button>
+        <p class="hint">Choisir un fichier (glisser-déposer ou clic) ou coller un lien direct vers le document (PDF, DOCX, TXT, etc.).</p>
+        <form id="form-upload" class="upload-zone upload-form-grid">
+          <div class="upload-row upload-row-file">
+            <input type="file" id="input-file" name="file" accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,.pptx,.ppt,.png,.jpg,.jpeg" />
+            <label for="input-file" class="upload-label">
+              <span id="upload-placeholder">Choisir un fichier</span>
+            </label>
+          </div>
+          <div class="upload-row upload-row-url">
+            <label for="input-file-url" class="upload-url-label">Ou lien (URL)</label>
+            <input type="url" id="input-file-url" class="input-inline input-url" placeholder="https://…" />
+          </div>
+          <div class="upload-row">
+            <input type="text" id="input-document-id" class="input-inline" placeholder="ID document (optionnel)" />
+            <button type="submit" id="btn-upload" class="btn btn-primary">Indexer</button>
+          </div>
         </form>
         <div id="upload-message" class="message" hidden></div>
       </div>
@@ -142,6 +183,7 @@
   </main>
 
   <div id="toast" class="toast" hidden></div>
+  </div>
 
   <script src="/static/js/app.js"></script>
 </body>

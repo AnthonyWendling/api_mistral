@@ -18,6 +18,11 @@ class CollectionOut(BaseModel):
     parent_id: str | None = None
 
 
+class CollectionsBulkCreate(BaseModel):
+    """Création en masse : liste de { name, parent_id? } ou noms seuls."""
+    collections: list[CollectionCreate] = Field(..., min_length=1, max_length=500)
+
+
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=100)

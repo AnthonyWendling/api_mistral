@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     allowed_origins: str = "*"
     chunk_size: int = 512
     chunk_overlap: int = 128
+    # Authentification interface (si vides, pas d'auth)
+    interface_code: str = ""
+    interface_password: str = ""
+    interface_secret_key: str = "change-me-in-production"
 
 
 settings = Settings()

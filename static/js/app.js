@@ -9,6 +9,30 @@
   let currentCollectionId = null;
   let currentCollectionName = null;
 
+  async function checkAuth() {
+    try {
+      const r = await fetch("/auth/check", { method: "GET", credentials: "include" });
+      return r.ok;
+    } catch (e) {
+      return false;
+    }
+  }
+
+  function showLoginScreen() {
+    const login = $("#login-screen");
+    const app = $("#app-content");
+    if (login) login.hidden = false;
+    if (app) app.hidden = true;
+  }
+
+  function showAppScreen() {
+    const login = $("#login-screen");
+    const app = $("#app-content");
+    if (login) login.hidden = true;
+    if (app) app.hidden = false;
+    loadCollections();
+  }
+
   function showRightPanel(panel) {
     const form = $("#section-create");
     const detail = $("#section-detail");
@@ -185,6 +209,7 @@
     $("#search-results").hidden = true;
     $("#search-results").innerHTML = "";
     $("#input-query").value = "";
+    updateUploadButton();
   }
 
   async function loadDocuments() {
@@ -318,6 +343,52 @@
     });
   }
 
+  const btnBulkCreate = $("#btn-bulk-create-collections");
+  if (btnBulkCreate) {
+    btnBulkCreate.addEventListener("click", async () => {
+      const raw = $("#input-collections-json") && $("#input-collections-json").value.trim();
+      if (!raw) {
+        showMessage("#bulk-create-message", "Collez un JSON (tableau de noms ou d'objets).", "error");
+        return;
+      }
+      let items = [];
+      try {
+        const parsed = JSON.parse(raw);
+        items = Array.isArray(parsed) ? parsed : [parsed];
+      } catch (e) {
+        showMessage("#bulk-create-message", "JSON invalide.", "error");
+        return;
+      }
+      const collections = [];
+      for (const it of items) {
+        if (typeof it === "string") {
+          if (it.trim()) collections.push({ name: it.trim(), parent_id: null });
+        } else if (it && typeof it === "object" && it.name) {
+          collections.push({ name: String(it.name).trim(), parent_id: it.parent_id || null });
+        }
+      }
+      if (!collections.length) {
+        showMessage("#bulk-create-message", "Aucune collection valide dans le JSON.", "error");
+        return;
+      }
+      hideMessage("#bulk-create-message");
+      btnBulkCreate.disabled = true;
+      try {
+        const result = await api("POST", "/collections/bulk", {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ collections }),
+        });
+        showMessage("#bulk-create-message", result.count + " collection(s) créée(s).", "success");
+        $("#input-collections-json").value = "";
+        loadCollections();
+      } catch (e) {
+        showMessage("#bulk-create-message", e.message || "Erreur", "error");
+      } finally {
+        btnBulkCreate.disabled = false;
+      }
+    });
+  }
+
   $("#btn-delete-collection").addEventListener("click", deleteCollection);
 
   $("#form-create-collection").addEventListener("submit", async (ev) => {
@@ -343,11 +414,17 @@
   const uploadPlaceholder = $("#upload-placeholder");
   const btnUpload = $("#btn-upload");
 
+  const inputFileUrl = $("#input-file-url");
+  function updateUploadButton() {
+    const hasFile = inputFile.files[0];
+    const hasUrl = inputFileUrl && inputFileUrl.value.trim();
+    btnUpload.disabled = !hasFile && !hasUrl;
+  }
   inputFile.addEventListener("change", () => {
-    const file = inputFile.files[0];
-    uploadPlaceholder.textContent = file ? file.name : "Choisir un fichier";
-    btnUpload.disabled = !file;
+    uploadPlaceholder.textContent = inputFile.files[0] ? inputFile.files[0].name : "Choisir un fichier";
+    updateUploadButton();
   });
+  if (inputFileUrl) inputFileUrl.addEventListener("input", updateUploadButton);
 
   const formUpload = $("#form-upload");
   if (formUpload) {
@@ -373,16 +450,22 @@
   $("#form-upload").addEventListener("submit", async (ev) => {
     ev.preventDefault();
     const file = inputFile.files[0];
-    if (!file || !currentCollectionId) return;
+    const fileUrl = inputFileUrl && inputFileUrl.value.trim();
+    if ((!file && !fileUrl) || !currentCollectionId) return;
     hideMessage("#upload-message");
     btnUpload.disabled = true;
     const formData = new FormData();
-    formData.append("file", file);
     const docId = $("#input-document-id").value.trim();
     if (docId) formData.append("document_id", docId);
+    if (file) {
+      formData.append("file", file);
+    } else {
+      formData.append("file_url", fileUrl);
+    }
     try {
       const data = await fetch(API_BASE + `/collections/${encodeURIComponent(currentCollectionId)}/index`, {
         method: "POST",
+        credentials: "include",
         body: formData,
       });
       if (!data.ok) {
@@ -396,11 +479,13 @@
         loadDocuments();
         inputFile.value = "";
         uploadPlaceholder.textContent = "Choisir un fichier";
+        if (inputFileUrl) inputFileUrl.value = "";
       }
     } catch (e) {
       showMessage("#upload-message", e.message || "Erreur indexation", "error");
     } finally {
-      btnUpload.disabled = !inputFile.files[0];
+      updateUploadButton();
+      btnUpload.disabled = !inputFile.files[0] && !(inputFileUrl && inputFileUrl.value.trim());
     }
   });
 
@@ -449,5 +534,49 @@
     }
   });
 
-  loadCollections();
+  async function init() {
+    const ok = await checkAuth();
+    if (ok) {
+      showAppScreen();
+    } else {
+      showLoginScreen();
+      const formLogin = $("#form-login");
+      const msgEl = $("#login-message");
+      if (formLogin) {
+        formLogin.addEventListener("submit", async (ev) => {
+          ev.preventDefault();
+          const code = $("#input-login-code") && $("#input-login-code").value.trim();
+          const password = $("#input-login-password") && $("#input-login-password").value;
+          if (!code || !password) return;
+          if (msgEl) msgEl.hidden = true;
+          try {
+            const r = await fetch("/auth/login", {
+              method: "POST",
+              credentials: "include",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ code, password }),
+            });
+            if (r.ok) {
+              showAppScreen();
+            } else {
+              const err = await r.json().catch(() => ({}));
+              if (msgEl) {
+                msgEl.textContent = err.detail || "Code ou mot de passe incorrect.";
+                msgEl.className = "message error";
+                msgEl.hidden = false;
+              }
+            }
+          } catch (e) {
+            if (msgEl) {
+              msgEl.textContent = e.message || "Erreur de connexion.";
+              msgEl.className = "message error";
+              msgEl.hidden = false;
+            }
+          }
+        });
+      }
+    }
+  }
+
+  init();
 })();
