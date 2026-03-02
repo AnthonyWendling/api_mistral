@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Collections vectorielles – API Mistral</title>
+  <link rel="stylesheet" href="/static/css/style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>Recherche vectorielle</h1>
+    <p class="subtitle">Créez des collections, intégrez des fichiers et testez la recherche sémantique.</p>
+  </header>
+
+  <main class="main">
+    <section id="section-list" class="panel">
+      <div class="panel-header">
+        <h2>Collections</h2>
+        <button type="button" id="btn-new-collection" class="btn btn-primary">Nouvelle collection</button>
+      </div>
+      <p class="hint">Un nom clair et une thématique par collection améliorent la précision des résultats.</p>
+      <div id="collections-list" class="collections-list"></div>
+      <div id="collections-loading" class="loading">Chargement…</div>
+      <div id="collections-error" class="error" hidden></div>
+    </section>
+
+    <section id="section-detail" class="panel detail-panel" hidden>
+      <div class="panel-header">
+        <div>
+          <button type="button" id="btn-back" class="btn btn-text">← Retour</button>
+          <h2 id="detail-title">Collection</h2>
+          <p id="detail-id" class="detail-id"></p>
+        </div>
+        <button type="button" id="btn-delete-collection" class="btn btn-danger">Supprimer la collection</button>
+      </div>
+
+      <div class="subsection">
+        <h3>Documents indexés</h3>
+        <div id="documents-list" class="documents-list"></div>
+        <div id="documents-loading" class="loading" hidden>Chargement…</div>
+        <div id="documents-empty" class="empty" hidden>Aucun document.</div>
+      </div>
+
+      <div class="subsection">
+        <h3>Ajouter un fichier</h3>
+        <p class="hint">Glissez-déposez un fichier ou cliquez pour sélectionner (PDF, DOCX, TXT, etc.).</p>
+        <form id="form-upload" class="upload-zone">
+          <input type="file" id="input-file" name="file" accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,.pptx,.ppt,.png,.jpg,.jpeg" />
+          <label for="input-file" class="upload-label">
+            <span id="upload-placeholder">Choisir un fichier</span>
+          </label>
+          <input type="text" id="input-document-id" class="input-inline" placeholder="ID document (optionnel)" />
+          <button type="submit" id="btn-upload" class="btn btn-primary" disabled>Indexer</button>
+        </form>
+        <div id="upload-message" class="message" hidden></div>
+      </div>
+
+      <div class="subsection">
+        <h3>Recherche vectorielle</h3>
+        <p class="hint">Testez la pertinence de la collection avec une requête.</p>
+        <form id="form-search" class="search-form">
+          <input type="text" id="input-query" placeholder="Votre question ou mots-clés…" required />
+          <label>
+            Nombre de résultats
+            <input type="number" id="input-top-k" value="10" min="1" max="100" />
+          </label>
+          <button type="submit" class="btn btn-primary">Rechercher</button>
+        </form>
+        <div id="search-results" class="search-results" hidden></div>
+        <div id="search-loading" class="loading" hidden>Recherche…</div>
+      </div>
+    </section>
+
+    <section id="section-create" class="panel modal-panel" hidden>
+      <div class="panel-header">
+        <h2>Nouvelle collection</h2>
+        <button type="button" id="btn-cancel-create" class="btn btn-text">Annuler</button>
+      </div>
+      <p class="hint">Nommez la collection selon son usage (ex. Contraintes réglementaires, Docs projet X).</p>
+      <form id="form-create-collection" class="form-inline">
+        <input type="text" id="input-collection-name" placeholder="Nom de la collection" required />
+        <button type="submit" class="btn btn-primary">Créer</button>
+      </form>
+      <div id="create-message" class="message" hidden></div>
+    </section>
+  </main>
+
+  <div id="toast" class="toast" hidden></div>
+
+  <script src="/static/js/app.js"></script>
+</body>
+</html>

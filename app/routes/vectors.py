@@ -9,10 +9,13 @@ from app.services.extraction import extract_text
 from app.services.vector_store_service import (
     add_documents,
     create_collection,
+    delete_collection,
+    delete_document,
     list_collections,
     list_documents,
     search as vector_search,
 )
+from app.services.document_classification import get_all_category_collection_specs
 
 router = APIRouter()
 
@@ -28,6 +31,29 @@ def create_collection_route(payload: CollectionCreate):
 @router.get("/collections")
 def list_collections_route():
     return {"collections": list_collections()}
+
+
+@router.get("/collections/category-specs")
+def list_category_collection_specs():
+    """
+    Liste toutes les collections « catégorie » à créer (contraintes, univers, secteur, domaine, lots).
+    Utiliser en n8n pour créer les collections manquantes (GET /collections puis pour chaque spec
+    appeler POST /collections/ensure avec le nom, ou POST /collections si l'id n'est pas dans la liste).
+    """
+    return {"specs": get_all_category_collection_specs()}
+
+
+@router.post("/collections/ensure")
+def ensure_collection_route(payload: CollectionCreate):
+    """
+    Crée la collection seulement si elle n'existe pas encore (vérification par l'id dérivé du nom).
+    Retourne { "id": "...", "created": true/false }. Idempotent : appeler avant chaque indexation
+    pour s'assurer que la collection existe.
+    """
+    existing = {c["id"] for c in list_collections()}
+    id_ = create_collection(payload.name)
+    created = id_ not in existing
+    return {"id": id_, "created": created}
 
 
 async def _get_file_from_url(file_url: str) -> tuple[bytes, str]:
@@ -60,6 +86,8 @@ async def index_document(
     nocodb_record_id: Annotated[str | None, Form()] = None,
     nocodb_table_name: Annotated[str | None, Form()] = None,
     nocodb_base_id: Annotated[str | None, Form()] = None,
+    affaire_id: Annotated[str | None, Form()] = None,
+    numero_affaire: Annotated[str | None, Form()] = None,
 ):
     if file and file.filename:
         content = await file.read()
@@ -96,6 +124,10 @@ async def index_document(
         meta["nocodb_table_name"] = nocodb_table_name
     if nocodb_base_id:
         meta["nocodb_base_id"] = nocodb_base_id
+    if affaire_id:
+        meta["affaire_id"] = affaire_id
+    if numero_affaire:
+        meta["numero_affaire"] = numero_affaire
 
     try:
         indexed = add_documents(
@@ -114,6 +146,32 @@ async def index_document(
         raise HTTPException(502, f"Erreur indexation (embedding ou base vectorielle): {err_msg}")
 
     return {"collection_id": collection_id, "indexed_chunks": indexed}
+
+
+@router.delete("/collections/{collection_id}")
+def delete_collection_route(collection_id: str):
+    """Supprime la collection et tout son contenu. Irréversible."""
+    try:
+        delete_collection(collection_id)
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err.lower() or "not found" in err.lower():
+            raise HTTPException(404, f"Collection non trouvée: {collection_id}")
+        raise HTTPException(502, err)
+    return {"deleted": collection_id}
+
+
+@router.delete("/collections/{collection_id}/documents/{document_id:path}")
+def delete_document_route(collection_id: str, document_id: str):
+    """Supprime tous les chunks d'un document de la collection."""
+    try:
+        delete_document(collection_id, document_id)
+    except Exception as e:
+        err = str(e)
+        if "does not exist" in err.lower() or "not found" in err.lower():
+            raise HTTPException(404, f"Collection non trouvée: {collection_id}")
+        raise HTTPException(502, err)
+    return {"deleted": document_id, "collection_id": collection_id}
 
 
 @router.get("/collections/{collection_id}/documents")

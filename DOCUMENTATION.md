@@ -214,6 +214,31 @@ Retourne la liste des collections existantes.
 
 ---
 
+### 5.4b Liste des collections « catégorie » (taxonomie)
+
+**GET /vectors/collections/category-specs**
+
+Retourne la liste de toutes les collections **catégorie** à créer (famille de contrainte, univers, secteur d’activité, domaine d’application, lots). À utiliser dans n8n pour créer les collections manquantes (voir **N8N-NOCODB-INDEXATION.md**).
+
+**Réponse (200)**  
+`{ "specs": [ { "id": "contrainte-securite", "name": "Contrainte sécurité", "type": "famille_contrainte" }, ... ] }`
+
+---
+
+### 5.4c Créer une collection seulement si elle n’existe pas
+
+**POST /vectors/collections/ensure**
+
+Crée la collection **uniquement si elle n’existe pas** (vérification par l’id dérivé du nom). Idempotent.
+
+**Corps (JSON)**  
+`{ "name": "Contrainte sécurité" }` ou `{ "name": "contrainte-securite" }`
+
+**Réponse (200)**  
+`{ "id": "contrainte-securite", "created": true }` ou `"created": false` si la collection existait déjà.
+
+---
+
 ### 5.5 Indexer un document (sans analyse)
 
 **POST /vectors/collections/{collection_id}/index**
@@ -442,6 +467,22 @@ Recherche sémantique dans une collection puis retourne les **chunks** + la list
 ```
 
 Utilisation : prendre `documents[].file_url` ou `source_file` pour déclencher un téléchargement dans n8n (SharePoint, etc.).
+
+---
+
+### 5.10b Webhook Classification de document (catégories)
+
+**POST /webhooks/classify-document**
+
+Classifie un document avec l’**IA** selon la taxonomie (famille de contrainte, univers, secteur, domaine, lots). Retourne les catégories choisies et les **collection_ids** dans lesquelles indexer le document.
+
+**Corps (JSON)**  
+`{ "text": "..." }` (texte brut) **ou** `{ "file_url": "https://..." }` (téléchargement + extraction du texte).
+
+**Réponse (200)**  
+`{ "famille_contraintes": ["Contrainte sécurité"], "univers": ["Matériel"], "secteur_activite": "Mécanique", "domaine_application": ["Process"], "lots": ["Electricité / Automatisme"], "collection_ids": ["contrainte-securite", "univers-materiel", "secteur-mecanique", "domaine-process", "lot-electricite-automatisme"] }`
+
+Voir **N8N-NOCODB-INDEXATION.md** pour les workflows n8n (créer les collections catégorie, indexer avec classification).
 
 ---
 

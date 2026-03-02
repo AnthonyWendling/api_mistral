@@ -9,7 +9,123 @@ Guide **n8n** pour déclencher l’indexation des documents NocoDB dans les coll
 - **n8n** avec accès à ton instance (self-hosted ou cloud).
 - **Credential NocoDB** configurée dans n8n (URL de l’API + token).
 - **API Mistral** déployée (ex. `https://apimistral-production.up.railway.app`).
-- Une **collection** déjà créée (ex. `nocodb-documents`) ou l’id de la collection cible.
+- Les **collections** sont créées **par affaire** (voir section ci-dessous) ; pas besoin de créer une seule collection globale à l’avance.
+
+---
+
+## Collections par affaire (à faire avant d’indexer)
+
+Pour que la recherche soit utile par affaire, il faut **une collection par affaire** (et non une seule collection pour tous les documents). Chaque document est indexé dans la collection qui correspond à son `affaire_id` (ou `numero_affaire`).
+
+### Convention de nom
+
+- **Nom de collection** : `nocodb-affaire-{affaire_id}` (ex. `nocodb-affaire-88`) ou `Affaire {numero_complet}` (ex. `Affaire 8888-24-0001`).
+- L’API transforme le nom en **id** (slug : minuscules, chiffres, tirets). Ex. `nocodb-affaire-88` → id `nocodb-affaire-88` ; `Affaire 8888-24-0001` → id `affaire-8888-24-0001`.
+
+### Créer la collection avant d’indexer
+
+1. **Endpoint** : `POST /vectors/collections`  
+   Body JSON : `{ "name": "nocodb-affaire-{{ affaire_id }}" }` (avec la valeur réelle de l’affaire, ex. `88`).
+2. L’API utilise **get_or_create** : si la collection existe déjà, elle est réutilisée ; sinon elle est créée. Tu peux donc appeler ce POST à chaque indexation sans risque de doublon.
+3. **Dans n8n** : avant d’appeler l’indexation pour un document, appelle une fois `POST .../vectors/collections` avec le nom de la collection de l’affaire de ce document. Puis appelle `POST .../vectors/collections/{collection_id}/index` avec le même `collection_id` (ex. `nocodb-affaire-88`).
+
+### Ordre dans le workflow
+
+1. Récupérer les documents (Get Many, puis Code pour 1 record → 1 à 3 items).
+2. **Pour chaque item** :  
+   - **Créer la collection de l’affaire** (si pas encore faite) :  
+     `POST https://.../vectors/collections`  
+     Body : `{ "name": "nocodb-affaire-{{ $json.affaire_id }}" }`  
+     (utilise `$json.affaire_id` qui sort du nœud Code.)
+   - **Ensuite** : indexer le document dans cette collection :  
+     `POST https://.../vectors/collections/nocodb-affaire-{{ $json.affaire_id }}/index`  
+     avec `file_url`, `document_id`, `nocodb_record_id`, `affaire_id`, `numero_affaire`, etc.
+
+Si `affaire_id` est vide pour un enregistrement, tu peux utiliser une collection par défaut (ex. `nocodb-sans-affaire`) en créant cette collection une fois et en utilisant son id pour ces documents.
+
+---
+
+## Collections par catégorie (contraintes, univers, secteur, domaine, lots)
+
+En plus des collections **par affaire**, tu peux créer des collections **par catégorie** (famille de contrainte, univers, secteur d’activité, domaine d’application, lots). L’**IA analyse le document** pour décider dans quelles catégories le ranger ; chaque document est alors indexé dans la **collection de l’affaire** et dans **chaque collection catégorie** qui s’applique. Ainsi, on ne crée une collection que si elle n’existe pas encore, et on enregistre le document dans les bonnes collections.
+
+### Vérifier si une collection existe avant de la créer
+
+- **GET** `https://.../vectors/collections` → liste des collections existantes (`id`, `name`).
+- **POST** `https://.../vectors/collections/ensure` avec body `{ "name": "Contrainte sécurité" }` → crée la collection **seulement si elle n’existe pas** (l’id sera dérivé du nom, ex. `contrainte-securite`). Réponse : `{ "id": "contrainte-securite", "created": true }` ou `"created": false` si elle existait déjà.
+- Utiliser **ensure** avant d’indexer pour chaque collection (affaire + catégories) sans créer de doublon.
+
+### Classifier le document avec l’IA
+
+- **POST** `https://.../webhooks/classify-document`  
+  Body : `{ "text": "..." }` (texte brut) **ou** `{ "file_url": "https://..." }` (l’API télécharge le fichier, extrait le texte, puis classe).  
+  Réponse : `famille_contraintes`, `univers`, `secteur_activite`, `domaine_application`, `lots`, et **`collection_ids`** (liste d’ids de collections dans lesquelles indexer le document, ex. `["contrainte-securite", "univers-materiel", "lot-electricite-automatisme"]`).
+
+### Taxonomie (listes officielles)
+
+Les ids de collection sont dérivés du libellé (minuscules, tirets). Ex. « Contrainte sécurité » → `contrainte-securite`, « Electricité / Automatisme » → `lot-electricite-automatisme`.
+
+**Famille de contrainte** (préfixe `contrainte-`) :  
+Contrainte d'implantation, Contrainte d'hygiène, Contrainte de production, Contrainte de qualité, Contrainte environnementale, Contrainte ergonomique, Contrainte financière, Contrainte maintenance, Contrainte organisationnelle, Contrainte planning, Contrainte produit, Contrainte projet, Contrainte réglementaire, Contrainte sécurité, Contrainte technique, Contrainte de confidentialité, Contrainte d'accessibilité, Contrainte logistique, Contrainte de performance, Contrainte d'intégration.
+
+**Univers** (préfixe `univers-`) :  
+Milieu, Matière, Méthode, Main d'œuvre, Matériel, Sécurité, Qualité.
+
+**Secteur d'activité** (préfixe `secteur-`) :  
+Générique, Agroalimentaire, Cosmétique, Mécanique, Pharmaceutique, Chimie, Papeterie, Menuiserie, Packaging.
+
+**Domaine d'application** (préfixe `domaine-`) :  
+Process, Logistique, Utilités, Infrastructure, Autres, Étude de flux, Nettoyage, PID, Étude de sol, Sécurité, ATEX, Normes, Chantier, DAO / CAO, Conditionnement.
+
+**Lots** (préfixe `lot-`) :  
+Electricité / Automatisme, Machine / Equipement, Convoyeur, Utilité : Air comprimé, Utilité : Équipement thermique, Second œuvre : Bâtiment interne, VRD (voirie Réseau Divers), Construction métallique, Transfert équipements, Equipements frigorifiques et Isolation / calorifugeage, Utilité : Isolation / calorifugeage, Salle blanche, Etudes / ingénierie / calculs, Génie civil / gros œuvre, Utilité : Hydraulique et pneumatique, Utilité : Réseau / Informatique, Manutention / levage, Nettoyage industriel / NEP, Rack / stockage / Palettier / Echafaudage, Utilité : Incendie, Utilité : Traitement de l'air, Tuyauteur - Chaudronnier, Serrurerie - Plateforme, VSM (Value Stream Mapping), AGV.
+
+La liste complète des **specs** (id + name + type) est exposée par l’API : **GET** `https://.../vectors/collections/category-specs` → `{ "specs": [ { "id": "contrainte-securite", "name": "Contrainte sécurité", "type": "famille_contrainte" }, ... ] }`.
+
+### Workflow n8n 1 : Créer les collections catégories (une fois ou périodiquement)
+
+Objectif : créer **uniquement les collections qui n’existent pas encore** (par contrainte, univers, secteur, domaine, lot).
+
+1. **Schedule** ou **manuel**.
+2. **HTTP Request** – GET `https://.../vectors/collections` → récupérer la liste des collections existantes. Sortie : `collections` (tableau avec `id`).
+3. **HTTP Request** – GET `https://.../vectors/collections/category-specs` → récupérer `specs` (toutes les collections catégorie à avoir).
+4. **Code** : pour chaque `spec` dans `specs`, si `spec.id` **n’est pas** dans les `id` des collections existantes, produire un item `{ "id": spec.id, "name": spec.name }`. Sinon ne pas produire d’item (pour ne pas recréer).
+5. **Loop** sur les items en sortie du Code.
+6. **HTTP Request** – POST `https://.../vectors/collections/ensure`  
+   Body JSON : `{ "name": "{{ $json.name }}" }` (ou `{{ $json.id }}` car l’id slugué est identique).  
+   Ainsi on ne crée que les collections manquantes.
+
+### Workflow n8n 2 : Indexer un document avec classification IA (et collections par affaire)
+
+Objectif : pour chaque document NocoDB, **analyser le document avec l’IA**, s’assurer que les collections (affaire + catégories) existent, puis **indexer le document dans la collection affaire et dans chaque collection catégorie** retournée par l’IA.
+
+1. Récupérer les documents (NocoDB Get Many, filtre `indexed === 0`, puis **Code** optimi_documents → 1 record → 1 à 3 items avec `file_url`, `record_id`, `document_id`, `affaire_id`, `numero_affaire`, etc.).
+2. Pour chaque item (chaque fichier à indexer) :
+   - **Option A** : envoyer l’URL du fichier à l’IA pour classification.  
+     **HTTP Request** – POST `https://.../webhooks/classify-document`  
+     Body JSON : `{ "file_url": "{{ $env.NOCODB_BASE_URL }}{{ $json.signed_path }}" }` (ou le champ `file_url` déjà construit).  
+     Réponse : `collection_ids` (liste d’ids de collections catégorie) + les libellés (famille_contraintes, univers, etc.).
+   - **Option B** : si tu as déjà le texte (ex. extrait ailleurs), Body : `{ "text": "{{ $json.extracted_text }}" }`.
+3. **Ensure collection affaire** :  
+   **HTTP Request** – POST `https://.../vectors/collections/ensure`  
+   Body : `{ "name": "nocodb-affaire-{{ $('Code').item.json.affaire_id }}" }` (adapter le nom du nœud qui porte `affaire_id`).
+4. **Ensure collections catégories** : pour chaque `collection_id` dans `collection_ids` de la réponse classify, appeler **POST** `https://.../vectors/collections/ensure` avec `{ "name": "{{ $json.collection_id }}" }`. En n8n : un nœud **Code** qui prend l’item courant + la réponse classify et produit **un item par collection_id** ; puis boucle sur ces items et **HTTP Request** POST ensure pour chaque. (Ou en une seule boucle : ensure affaire, puis pour chaque id dans `collection_ids` ensure + index.)
+5. **Indexer dans la collection affaire** :  
+   **HTTP Request** – POST `https://.../vectors/collections/nocodb-affaire-{{ $('Code').item.json.affaire_id }}/index`  
+   Body form : `file_url`, `document_id`, `nocodb_record_id`, `affaire_id`, `numero_affaire`, etc.
+6. **Indexer dans chaque collection catégorie** : pour chaque `collection_id` dans `collection_ids`,  
+   **HTTP Request** – POST `https://.../vectors/collections/{{ $json.collection_id }}/index`  
+   avec les mêmes champs (file_url, document_id, nocodb_record_id, affaire_id, numero_affaire).  
+   En n8n : après le Code qui éclate en un item par collection_id, faire une boucle : ensure puis index pour cet id.
+7. (Optionnel) Marquer le record NocoDB comme indexé (**NocoDB Update**).
+
+Résumé : **ne créer une collection que si elle n’existe pas** (ensure) ; **enregistrer le document dans la bonne collection affaire et dans les collections catégories** déterminées par l’IA.
+
+### Trouver le document adéquat (recherche)
+
+- **Par affaire** : `POST /webhooks/search-documents` avec `collection_id: "nocodb-affaire-88"` et ta `query` → les documents indexés dans cette affaire.
+- **Par catégorie** : même appel avec `collection_id: "contrainte-securite"` (ou `univers-materiel`, `lot-electricite-automatisme`, etc.) → les documents que l’IA a classés dans cette catégorie.
+- La réponse contient `documents` avec `nocodb_record_id`, `file_url`, `affaire_id`, `numero_affaire`, etc., pour ouvrir ou télécharger le bon document.
 
 ---
 
@@ -42,6 +158,8 @@ Lors de l’appel à `POST /vectors/collections/{collection_id}/index` (en **mul
 | `nocodb_record_id` | Recommandé | Même id que `document_id` (pour ouvrir le record après recherche). |
 | `nocodb_table_name` | Optionnel | Nom de la table. Ex. `Documents` ou `{{ $json.TableName }}`. |
 | `nocodb_base_id` | Optionnel | Id de la base NocoDB. Ex. `{{ $json.BaseId }}`. |
+| `affaire_id` | Optionnel | Id de l’affaire (ex. `{{ $json.affaire_id }}` ou `{{ $json.ouptimi_affaires_id }}`). Utile pour filtrer ou afficher les résultats par affaire. |
+| `numero_affaire` | Optionnel | Numéro d’affaire (ex. `{{ $json.numero_complet }}`). Aide à identifier l’affaire dans les résultats de recherche. |
 
 \* Il faut **soit** `file`, **soit** `file_url`.
 
@@ -137,9 +255,12 @@ for (const item of items) {
   const pdf    = getAttachment(json.document_pdf);
   const fichier = getAttachment(json.fichier);
 
-  if (docx)   out.push({ json: { record_id: recordId, document_id: `${recordId}_docx`,   signed_path: docx.signedPath,  source_file: docx.title,  column: "document_docx",  table_name: TABLE_NAME, base_id: json.BaseId ?? "" } });
-  if (pdf)    out.push({ json: { record_id: recordId, document_id: `${recordId}_pdf`,    signed_path: pdf.signedPath,   source_file: pdf.title,   column: "document_pdf",   table_name: TABLE_NAME, base_id: json.BaseId ?? "" } });
-  if (fichier) out.push({ json: { record_id: recordId, document_id: `${recordId}_fichier`, signed_path: fichier.signedPath, source_file: fichier.title, column: "fichier", table_name: TABLE_NAME, base_id: json.BaseId ?? "" } });
+  const affaireId = String(json.ouptimi_affaires_id ?? json.affaire_id ?? "");
+  const numeroAffaire = json.numero_complet ?? "";
+
+  if (docx)   out.push({ json: { record_id: recordId, document_id: `${recordId}_docx`,   signed_path: docx.signedPath,  source_file: docx.title,  column: "document_docx",  table_name: TABLE_NAME, base_id: json.BaseId ?? "", affaire_id: affaireId, numero_affaire: numeroAffaire } });
+  if (pdf)    out.push({ json: { record_id: recordId, document_id: `${recordId}_pdf`,    signed_path: pdf.signedPath,   source_file: pdf.title,   column: "document_pdf",   table_name: TABLE_NAME, base_id: json.BaseId ?? "", affaire_id: affaireId, numero_affaire: numeroAffaire } });
+  if (fichier) out.push({ json: { record_id: recordId, document_id: `${recordId}_fichier`, signed_path: fichier.signedPath, source_file: fichier.title, column: "fichier", table_name: TABLE_NAME, base_id: json.BaseId ?? "", affaire_id: affaireId, numero_affaire: numeroAffaire } });
 }
 
 return out;
@@ -183,7 +304,9 @@ Si le body NocoDB est imbriqué (ex. `body.data` ou `body.record`), ajouter un n
 - `file_url` → `{{ $json.body?.Attachment ?? $json.body?.FileUrl ?? $json.Attachment ?? $json.file_url }}`
 - `table_name` → `{{ $json.body?.TableName ?? $json.TableName ?? "Documents" }}`
 - `base_id` → `{{ $json.body?.BaseId ?? $json.BaseId ?? "" }}`
-- `collection_id` → `nocodb-documents` (ou une expression si tu varies par table)
+- `affaire_id` → `{{ $json.body?.ouptimi_affaires_id ?? $json.body?.affaire_id ?? '' }}`
+- `numero_affaire` → `{{ $json.body?.numero_complet ?? $json.body?.numero_affaire ?? '' }}`
+- `collection_id` → **par affaire** : `nocodb-affaire-{{ $json.body?.ouptimi_affaires_id ?? $json.body?.affaire_id ?? 'sans-affaire' }}` (créer la collection à l’étape 3b avant d’indexer).
 
 Si NocoDB envoie directement les champs à la racine du body, tu peux utiliser `$json.body` dans les nœuds suivants (ex. `$json.body.id`).
 
@@ -206,37 +329,49 @@ Si NocoDB envoie directement les champs à la racine du body, tu peux utiliser `
 
 - Pas de nœud de téléchargement : tu passes directement à l’étape 4 et tu envoies `file_url` en form (voir ci-dessous).
 
+### Étape 3b : Créer la collection de l’affaire (si tu utilises une collection par affaire)
+
+- Nœud **HTTP Request** :
+  - **Method** : POST.
+  - **URL** : `https://apimistral-production.up.railway.app/vectors/collections`
+  - **Body** (JSON) : `{ "name": "{{ $('Set').first().json.collection_id }}" }`  
+    (le `collection_id` du Set est déjà du type `nocodb-affaire-88` ; l’API crée ou réutilise la collection.)
+
 ### Étape 4 : Appeler l’API d’indexation
 
 Ajouter un nœud **HTTP Request**.
 
 - **Method** : POST.
 - **URL** :  
-  `https://apimistral-production.up.railway.app/vectors/collections/{{ $('Set').first().json.collection_id ?? 'nocodb-documents' }}/index`  
-  (remplace `Set` par le nom de ton nœud qui définit `collection_id`, ou mets une valeur fixe comme `nocodb-documents`).
+  `https://apimistral-production.up.railway.app/vectors/collections/{{ $('Set').first().json.collection_id ?? 'nocodb-sans-affaire' }}/index`  
+  (remplace `Set` par le nom de ton nœud ; `collection_id` doit être cohérent avec le nom créé à l’étape 3b, ex. `nocodb-affaire-88`).
 
 - **Send Body** : Oui.
 - **Body Content Type** : **Multipart-Form** (si tu envoies un fichier binaire) **ou** **Form-Data** (si tu envoies seulement `file_url`).
 
 **Si tu as un fichier binaire (Cas A ou B)** :
 
-| Name     | Type         | Value / Expression |
-|----------|--------------|--------------------|
-| `file`   | Binary Data  | Binary Property = `data` (ou le nom de la propriété binaire du nœud précédent) |
-| `document_id` | String | `{{ $('Set').first().json.record_id ?? $json.body?.Id ?? $json.body?.id }}` |
-| `nocodb_record_id` | String | même expression que `document_id` |
-| `nocodb_table_name` | String | `{{ $('Set').first().json.table_name ?? 'Documents' }}` |
-| `nocodb_base_id` | String | `{{ $('Set').first().json.base_id ?? '' }}` |
+| Name               | Type         | Value / Expression |
+|--------------------|--------------|--------------------|
+| `file`             | Binary Data  | Binary Property = `data` (ou le nom de la propriété binaire du nœud précédent) |
+| `document_id`      | String       | `{{ $('Set').first().json.record_id ?? $json.body?.Id ?? $json.body?.id }}` |
+| `nocodb_record_id` | String       | même expression que `document_id` |
+| `nocodb_table_name`| String       | `{{ $('Set').first().json.table_name ?? 'Documents' }}` |
+| `nocodb_base_id`   | String       | `{{ $('Set').first().json.base_id ?? '' }}` |
+| `affaire_id`       | String       | `{{ $('Set').first().json.affaire_id ?? $json.body?.affaire_id ?? '' }}` |
+| `numero_affaire`   | String       | `{{ $('Set').first().json.numero_affaire ?? $json.body?.numero_affaire ?? '' }}` |
 
 **Si tu envoies seulement une URL (Cas C)** :
 
-| Name     | Type  | Value / Expression |
-|----------|-------|--------------------|
-| `file_url` | String | `{{ $json.file_url ?? $json.body?.Attachment ?? $json.body?.FileUrl }}` |
-| `document_id` | String | `{{ $json.body?.Id ?? $json.body?.id }}` |
-| `nocodb_record_id` | String | même que `document_id` |
-| `nocodb_table_name` | String | `{{ $json.body?.TableName ?? 'Documents' }}` |
-| `nocodb_base_id` | String | `{{ $json.body?.BaseId ?? '' }}` |
+| Name               | Type  | Value / Expression |
+|--------------------|-------|--------------------|
+| `file_url`         | String| `{{ $json.file_url ?? $json.body?.Attachment ?? $json.body?.FileUrl }}` |
+| `document_id`      | String| `{{ $json.body?.Id ?? $json.body?.id }}` |
+| `nocodb_record_id` | String| même que `document_id` |
+| `nocodb_table_name`| String| `{{ $json.body?.TableName ?? 'Documents' }}` |
+| `nocodb_base_id`   | String| `{{ $json.body?.BaseId ?? '' }}` |
+| `affaire_id`       | String| `{{ $json.body?.affaire_id ?? '' }}` |
+| `numero_affaire`   | String| `{{ $json.body?.numero_affaire ?? '' }}` |
 
 - Sur ce nœud : activer **Continue On Fail** pour ne pas faire échouer le workflow si un fichier est non supporté ou trop gros.
 
@@ -270,17 +405,61 @@ Workflow déclenché par un **Schedule** qui liste les enregistrements NocoDB, f
 
 ### Étape 4 : Pour chaque enregistrement – récupérer le fichier
 
-- **Loop Over Items** (ou le flux n8n qui itère sur chaque item).
-- Pour chaque item : récupérer l’URL du document (champ pièce jointe ou URL) puis :
-  - soit **HTTP Request** GET (Response Format: File) pour avoir le binaire,
-  - soit garder l’URL pour l’envoyer en `file_url` à l’API.
+1. Ajouter un nœud **"Loop Over Items"** (ou utiliser le flux par défaut de n8n si chaque item correspond déjà à un document).
+   - Ce nœud va itérer sur tous les enregistrements récupérés à l’étape 2/3.
 
-### Étape 5 : Appeler l’API d’indexation
+2. À l’intérieur de la boucle, pour chaque item :
+   - Ajouter un nœud **"Set"** pour extraire et nommer explicitement les champs nécessaires :
+     - **Cas avec une structure complexe comme l’API fournie ci-dessus** (exemple pour `optimi_documents` avec un champ `fichier` tableau) :
+       -  Dans le nœud **Set** (après extraction avec un nœud Function/Code si besoin) :
+         - `file_url` = `{{ $env.NOCODB_BASE_URL || 'https://ton-nocodb.com/' }}{{ $json.fichier[0].signedPath }}`
+         - `record_id` = `{{ $json.Id || $json.id }}`
+         - `document_id` = `{{ $json.Id || $json.id }}`
+         - `table_name` = `optimi_documents`
+         - `base_id` = `{{ $json.BaseId ?? '' }}`
+         - `affaire_id` = `{{ $json.ouptimi_affaires_id ?? $json.affaire_id ?? '' }}`
+         - `numero_affaire` = `{{ $json.numero_complet ?? '' }}`
+         - (Tu peux extraire le nom de fichier avec `{{ $json.fichier[0].title }}` si besoin dans les métadonnées.)
+     - **Cas d’une table avec seulement une colonne Attachment/URL** :
+         - `url_fichier` = `{{ $json.Attachment ?? $json.FileUrl }}`
+         - `record_id` = `{{ $json.Id ?? $json.id }}`
+         - `table_name` = `{{ $json.TableName ?? 'Documents' }}`
+         - `base_id` = `{{ $json.BaseId ?? '' }}`
+     
+   - Ensuite, ajouter un nœud **"IF"** pour tester si tu obtiens une vraie URL dans `file_url` ou `url_fichier` :
+     - Condition : `{{ $json.file_url || $json.url_fichier }}` is not empty
 
-- Nœud **HTTP Request** (comme dans le Workflow 1, étape 4) :
-  - URL : `https://apimistral-production.up.railway.app/vectors/collections/nocodb-documents/index`
+     - **Dans le cas OUI (`file_url` ou `url_fichier` existe et n’est pas vide) :**
+       - Ajouter un nœud **"HTTP Request"** avec :
+         - **Method** : GET
+         - **URL** : `{{ $json.file_url || $json.url_fichier }}`
+         - **Response Format** : File (pour télécharger le binaire du document)
+       - La sortie contiendra la donnée binaire à utiliser comme `file` dans l’étape d’indexation.
+
+     - **Sinon (non disponible ou non exploitable)** :
+       - Garder la valeur `url_fichier` pour envoi direct sous forme de champ `file_url` à l’API d’indexation (à l’étape suivante).
+
+   - Tu peux également utiliser un nœud **"Switch"** si tu souhaites gérer différents types/champs de pièces jointes selon la structure de tes données NocoDB (ex : différencier `Attachment`, `FileUrl`, autre champ…).
+
+Résumé :  
+- Pour chaque enregistrement, le flux va soit : télécharger le fichier (si possible) pour l’envoyer en binaire, soit préparer le champ `file_url` pour l’API d’indexation.
+
+### Étape 5a : Créer la collection de l’affaire (avant d’indexer)
+
+- Nœud **HTTP Request** :
+  - **Method** : POST.
+  - **URL** : `https://apimistral-production.up.railway.app/vectors/collections` (adapter l’URL de ton API).
+  - **Body** (JSON) : `{ "name": "nocodb-affaire-{{ $json.affaire_id }}" }`  
+    (si `affaire_id` peut être vide, utiliser un nom par défaut, ex. `nocodb-sans-affaire`, avec une condition **IF** sur `$json.affaire_id`).
+- Pas besoin de récupérer la réponse pour la suite : l’id de la collection sera `nocodb-affaire-{{ $json.affaire_id }}` (slug du nom).
+
+### Étape 5b : Appeler l’API d’indexation (dans la collection de l’affaire)
+
+- Nœud **HTTP Request** (juste après la création de collection) :
+  - **URL** : `https://apimistral-production.up.railway.app/vectors/collections/nocodb-affaire-{{ $json.affaire_id }}/index`  
+    (même convention que le nom de collection : id = `nocodb-affaire-88` pour affaire_id 88).
   - Body Multipart ou Form selon que tu envoies `file` (binaire) ou `file_url`.
-  - Champs : `document_id`, `nocodb_record_id`, `nocodb_table_name`, `nocodb_base_id` (avec les champs de l’item courant, ex. `$json.Id`, `$json.TableName`).
+  - Champs : `document_id`, `nocodb_record_id`, `nocodb_table_name`, `nocodb_base_id`, `affaire_id`, `numero_affaire` (ex. `$json.record_id`, `$json.document_id`, `$json.affaire_id`, `$json.numero_affaire` après le Code).
   - **Continue On Fail** : activé.
 
 ### Étape 6 (optionnel) : Marquer comme indexé dans NocoDB
@@ -330,6 +509,8 @@ Une fois les documents indexés avec `nocodb_record_id`, etc. :
 | URL complète du fichier | `{{ $env.NOCODB_BASE_URL || 'https://ton-nocodb.com/' }}{{ $json.signed_path }}` (adapter la base) |
 | Nom du fichier (source_file) | `{{ $json.source_file }}` |
 | Table / base | `{{ $json.table_name }}`, `{{ $json.base_id }}` |
+| Id affaire (affaire_id) | `{{ $json.affaire_id }}` |
+| Numéro d’affaire (numero_affaire) | `{{ $json.numero_affaire }}` |
 | Filtrer non indexés (sur Get Many) | `{{ $json.indexed === 0 }}` |
 
 **Webhook (body NocoDB)** :
@@ -347,7 +528,7 @@ Une fois les documents indexés avec `nocodb_record_id`, etc. :
 ## Référence API (rappel)
 
 - **Indexation** : `POST /vectors/collections/{collection_id}/index`  
-  Body (multipart) : `file` ou `file_url`, `document_id`, `nocodb_record_id`, `nocodb_table_name`, `nocodb_base_id`.
+  Body (multipart) : `file` ou `file_url`, `document_id`, `nocodb_record_id`, `nocodb_table_name`, `nocodb_base_id`, `affaire_id`, `numero_affaire`.
 - **Recherche** : `POST /webhooks/search-documents`  
   Body JSON : `{ "query": "...", "collection_id": "...", "top_k": 10 }`  
   Réponse : `results` (chunks) + `documents` (avec `nocodb_record_id`, etc.).

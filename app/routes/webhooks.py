@@ -1,20 +1,25 @@
 """
 Webhooks pour : RAG (question + vecteurs → réponse), recherche document pour téléchargement,
-suggestion de collections à partir des dossiers SharePoint, etc.
+suggestion de collections à partir des dossiers SharePoint, classification de documents par catégorie, etc.
 """
 
 import json
 import re
 from urllib.parse import urlparse
 
+import httpx
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from app.config import settings
 from app.schemas.requests_responses import RAGRequest, RAGResponse, SearchResult
+from app.services.document_classification import classify_document
+from app.services.extraction import extract_text
 from app.services.mistral_agent import rag_answer, suggest_collections_from_folders
 from app.services.vector_store_service import search as vector_search
 
 router = APIRouter()
+MAX_BYTES = settings.max_file_size_mb * 1024 * 1024
 
 
 class FolderItem(BaseModel):
@@ -36,6 +41,58 @@ class SearchDocumentsRequest(BaseModel):
     query: str = Field(..., min_length=1)
     collection_id: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=50)
+
+
+class ClassifyDocumentRequest(BaseModel):
+    """Texte du document à classifier, ou URL pour télécharger et extraire le texte."""
+    text: str | None = Field(None, description="Texte brut du document (prioritaire si fourni)")
+    file_url: str | None = Field(None, description="URL du fichier à télécharger et analyser (PDF, DOCX, etc.)")
+
+
+@router.post("/classify-document")
+async def classify_document_webhook(payload: ClassifyDocumentRequest):
+    """
+    Classifie un document avec l'IA selon la taxonomie (famille de contrainte, univers,
+    secteur d'activité, domaine d'application, lots). Retourne les catégories choisies
+    et les collection_ids dans lesquelles indexer le document.
+    Fournir soit "text" (texte brut), soit "file_url" (téléchargement + extraction).
+    """
+    text = payload.text
+    if not text and payload.file_url:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as client:
+                r = await client.get(payload.file_url)
+                r.raise_for_status()
+                if len(r.content) > MAX_BYTES:
+                    raise HTTPException(400, f"Fichier trop volumineux (max {settings.max_file_size_mb} Mo)")
+                filename = r.url.path.split("/")[-1] or "document"
+                if not filename or filename == "/":
+                    filename = "document"
+                text = extract_text(r.content, filename=filename)
+        except httpx.HTTPStatusError as e:
+            raise HTTPException(502, f"Impossible de télécharger le fichier (URL renvoie {e.response.status_code})")
+        except httpx.RequestError as e:
+            raise HTTPException(502, f"Impossible d'accéder à l'URL: {str(e)}")
+        except ValueError as e:
+            raise HTTPException(400, str(e))
+    if not text or not text.strip():
+        return {
+            "famille_contraintes": [],
+            "univers": [],
+            "secteur_activite": "",
+            "domaine_application": [],
+            "lots": [],
+            "collection_ids": [],
+        }
+    result = classify_document(text)
+    return {
+        "famille_contraintes": result["famille_contraintes"],
+        "univers": result["univers"],
+        "secteur_activite": result["secteur_activite"],
+        "domaine_application": result["domaine_application"],
+        "lots": result["lots"],
+        "collection_ids": result["collection_ids"],
+    }
 
 
 @router.post("/suggest-collections")
@@ -182,6 +239,10 @@ def search_documents_webhook(payload: SearchDocumentsRequest):
                 doc["nocodb_table_name"] = meta["nocodb_table_name"]
             if meta.get("nocodb_base_id"):
                 doc["nocodb_base_id"] = meta["nocodb_base_id"]
+            if meta.get("affaire_id"):
+                doc["affaire_id"] = meta["affaire_id"]
+            if meta.get("numero_affaire"):
+                doc["numero_affaire"] = meta["numero_affaire"]
             documents.append(doc)
 
     return {

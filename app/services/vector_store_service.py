@@ -35,6 +35,18 @@ def list_collections() -> list[dict]:
     ]
 
 
+def delete_collection(collection_id: str) -> None:
+    """Supprime une collection et tout son contenu."""
+    client = get_client()
+    client.delete_collection(name=collection_id)
+
+
+def delete_document(collection_id: str, document_id: str) -> None:
+    """Supprime tous les chunks d'un document dans une collection."""
+    coll = get_collection(collection_id)
+    coll.delete(where={"document_id": document_id})
+
+
 def get_collection(collection_id: str):
     client = get_client()
     return client.get_collection(name=collection_id)
@@ -142,6 +154,10 @@ def list_documents(collection_id: str, limit_chunks: int = 2000) -> list[dict]:
             doc["nocodb_table_name"] = meta["nocodb_table_name"]
         if meta.get("nocodb_base_id"):
             doc["nocodb_base_id"] = meta["nocodb_base_id"]
+        if meta.get("affaire_id"):
+            doc["affaire_id"] = meta["affaire_id"]
+        if meta.get("numero_affaire"):
+            doc["numero_affaire"] = meta["numero_affaire"]
         docs.append(doc)
     return docs
 
