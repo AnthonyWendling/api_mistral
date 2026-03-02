@@ -20,19 +20,48 @@ def get_client() -> chromadb.PersistentClient:
     )
 
 
-def create_collection(name: str) -> str:
+def create_collection(name: str, parent_id: str | None = None) -> str:
+    """Crée une collection (ou sous-collection si parent_id est fourni)."""
     client = get_client()
-    id_ = _slug(name)
-    client.get_or_create_collection(name=id_, metadata={"name": name})
+    slug = _slug(name)
+    id_ = f"{parent_id}--{slug}" if parent_id else slug
+    client.get_or_create_collection(
+        name=id_,
+        metadata={"name": name, "parent_id": parent_id or ""},
+    )
     return id_
 
 
 def list_collections() -> list[dict]:
+    """Retourne la liste plate avec parent_id pour construire l'arbre (IA / Mistral)."""
     client = get_client()
     return [
-        {"id": c.name, "name": c.metadata.get("name", c.name)}
+        {
+            "id": c.name,
+            "name": c.metadata.get("name", c.name),
+            "parent_id": c.metadata.get("parent_id") or None,
+        }
         for c in client.list_collections()
     ]
+
+
+def get_descendant_collection_ids(collection_id: str) -> list[str]:
+    """Retourne [collection_id] + tous les ids des sous-collections (récursif). Pour recherche vectorielle LLM."""
+    all_ = list_collections()
+    by_parent: dict[str | None, list[dict]] = {}
+    for c in all_:
+        pid = c.get("parent_id") or None
+        by_parent.setdefault(pid, []).append(c)
+    out = [collection_id]
+
+    def add_children(pid: str) -> None:
+        for c in by_parent.get(pid) or []:
+            cid = c["id"]
+            out.append(cid)
+            add_children(cid)
+
+    add_children(collection_id)
+    return out
 
 
 def delete_collection(collection_id: str) -> None:
@@ -162,10 +191,54 @@ def list_documents(collection_id: str, limit_chunks: int = 2000) -> list[dict]:
     return docs
 
 
-def search(collection_id: str, query: str, top_k: int = 10) -> list[dict]:
+def search(
+    collection_id: str,
+    query: str,
+    top_k: int = 10,
+    include_subcollections: bool = False,
+) -> list[dict]:
+    """
+    Recherche vectorielle pour l'IA / LLM Mistral.
+    Si include_subcollections=True, cherche dans la collection et toutes ses sous-collections,
+    puis fusionne et trie par distance.
+    """
+    if include_subcollections:
+        ids_to_search = get_descendant_collection_ids(collection_id)
+        all_results: list[tuple[float, dict]] = []
+        for cid in ids_to_search:
+            try:
+                coll = get_collection(cid)
+                q_embed = embed_query(query)
+                result = coll.query(
+                    query_embeddings=[q_embed],
+                    n_results=top_k,
+                    include=["documents", "metadatas", "distances"],
+                )
+                if result["ids"] and result["ids"][0]:
+                    for i, id_ in enumerate(result["ids"][0]):
+                        dist = result["distances"][0][i] if result.get("distances") and result["distances"][0] else None
+                        meta = (result["metadatas"][0][i] or {}) if result["metadatas"] else {}
+                        meta["_collection_id"] = cid
+                        all_results.append((
+                            dist if dist is not None else float("inf"),
+                            {
+                                "chunk_id": id_,
+                                "text": result["documents"][0][i] if result["documents"] else "",
+                                "metadata": meta,
+                                "distance": dist,
+                            },
+                        ))
+            except Exception:
+                continue
+        all_results.sort(key=lambda x: x[0])
+        return [r[1] for r in all_results[:top_k]]
     coll = get_collection(collection_id)
     q_embed = embed_query(query)
-    result = coll.query(query_embeddings=[q_embed], n_results=top_k, include=["documents", "metadatas", "distances"])
+    result = coll.query(
+        query_embeddings=[q_embed],
+        n_results=top_k,
+        include=["documents", "metadatas", "distances"],
+    )
     out = []
     if result["ids"] and result["ids"][0]:
         for i, id_ in enumerate(result["ids"][0]):

@@ -9,10 +9,14 @@
   let currentCollectionId = null;
   let currentCollectionName = null;
 
-  function showSection(sectionId) {
-    $("#section-list").hidden = sectionId !== "list";
-    $("#section-detail").hidden = sectionId !== "detail";
-    $("#section-create").hidden = sectionId !== "create";
+  function showRightPanel(panel) {
+    const form = $("#section-create");
+    const detail = $("#section-detail");
+    const sources = $("#section-sources");
+    if (form) form.hidden = panel !== "create";
+    if (detail) detail.hidden = panel !== "detail";
+    if (sources) sources.hidden = panel !== "sources";
+    if (panel === "sources") loadSourcesList();
   }
 
   function showToast(message, isError = false) {
@@ -53,6 +57,8 @@
     return res.json();
   }
 
+  let collectionsFlat = [];
+
   async function loadCollections() {
     const list = $("#collections-list");
     const loading = $("#collections-loading");
@@ -61,23 +67,104 @@
     errEl.hidden = true;
     loading.hidden = false;
     try {
-      const data = await api("GET", "/collections");
+      const dataTree = await api("GET", "/collections?tree=true");
+      const dataFlat = await api("GET", "/collections");
+      collectionsFlat = dataFlat.collections || [];
       loading.hidden = true;
-      if (!data.collections || data.collections.length === 0) {
-        list.innerHTML = "<p class=\"empty\">Aucune collection. Créez-en une.</p>";
+      const roots = dataTree.collections || [];
+      if (roots.length === 0) {
+        list.innerHTML = "<p class=\"empty\">Aucune collection. Créez-en une (ou une sous-collection).</p>";
         return;
       }
-      data.collections.forEach((c) => {
+      function renderNode(node, depth) {
         const card = document.createElement("div");
-        card.className = "collection-card";
-        card.innerHTML = `<div><span class="name">${escapeHtml(c.name)}</span><br><span class="id">${escapeHtml(c.id)}</span></div>`;
-        card.addEventListener("click", () => openCollection(c.id, c.name));
+        card.className = "collection-card" + (depth > 0 ? " collection-card--child" : "");
+        card.style.setProperty("--depth", String(depth));
+        const subLabel = depth > 0 ? "<span class=\"card-sub\">sous-collection</span> " : "";
+        card.innerHTML = `<div>${subLabel}<span class="name">${escapeHtml(node.name)}</span><br><span class="id">${escapeHtml(node.id)}</span></div>`;
+        card.addEventListener("click", (e) => { e.stopPropagation(); openCollection(node.id, node.name); });
         list.appendChild(card);
-      });
+        (node.children || []).forEach((child) => renderNode(child, depth + 1));
+      }
+      roots.forEach((root) => renderNode(root, 0));
     } catch (e) {
       loading.hidden = true;
       errEl.textContent = e.message || "Erreur chargement collections";
       errEl.hidden = false;
+    }
+  }
+
+  function fillParentSelect() {
+    const sel = $("#input-collection-parent");
+    if (!sel) return;
+    sel.innerHTML = "<option value=\"\">— Aucune (collection racine) —</option>";
+    collectionsFlat.filter((c) => !c.parent_id).forEach((c) => {
+      const opt = document.createElement("option");
+      opt.value = c.id;
+      opt.textContent = c.name + " (" + c.id + ")";
+      sel.appendChild(opt);
+    });
+  }
+
+  async function loadSourcesList() {
+    const list = $("#sources-list");
+    const loading = $("#sources-loading");
+    if (!list) return;
+    list.innerHTML = "";
+    if (loading) loading.hidden = false;
+    try {
+      const data = await api("GET", "/sources");
+      const sources = Array.isArray(data) ? data : (data.sources || data);
+      if (loading) loading.hidden = true;
+      if (!sources || sources.length === 0) {
+        list.innerHTML = "<p class=\"empty\">Aucune connexion. Ajoutez une table NocoDB ci-dessous.</p>";
+        return;
+      }
+      sources.forEach((s) => {
+        const row = document.createElement("div");
+        row.className = "source-row";
+        row.innerHTML = `
+          <div class="source-info">
+            <span class="source-name">${escapeHtml(s.name)}</span>
+            <span class="source-type">${escapeHtml(s.type)}</span>
+          </div>
+          <div class="source-actions">
+            <button type="button" class="btn btn-primary btn-sync-source" data-id="${escapeHtml(s.id)}">Indexer</button>
+            <button type="button" class="btn btn-danger btn-delete-source" data-id="${escapeHtml(s.id)}">Suppr.</button>
+          </div>
+        `;
+        row.querySelector(".btn-sync-source").addEventListener("click", () => syncSource(s.id));
+        row.querySelector(".btn-delete-source").addEventListener("click", () => deleteSource(s.id));
+        list.appendChild(row);
+      });
+    } catch (e) {
+      if (loading) loading.hidden = true;
+      list.innerHTML = "<p class=\"error\">" + escapeHtml(e.message) + "</p>";
+    }
+  }
+
+  async function syncSource(sourceId) {
+    const btn = document.querySelector(".btn-sync-source[data-id=\"" + sourceId + "\"]");
+    if (btn) btn.disabled = true;
+    try {
+      const result = await api("POST", "/sources/" + encodeURIComponent(sourceId) + "/sync");
+      showToast("Indexation : " + (result.indexed || 0) + " chunk(s). " + (result.errors && result.errors.length ? result.errors.length + " erreur(s)." : ""));
+      loadSourcesList();
+    } catch (e) {
+      showToast(e.message || "Erreur sync", true);
+    } finally {
+      if (btn) btn.disabled = false;
+    }
+  }
+
+  async function deleteSource(sourceId) {
+    if (!confirm("Supprimer cette connexion API ?")) return;
+    try {
+      await api("DELETE", "/sources/" + encodeURIComponent(sourceId));
+      showToast("Connexion supprimée");
+      loadSourcesList();
+    } catch (e) {
+      showToast(e.message || "Erreur suppression", true);
     }
   }
 
@@ -93,7 +180,7 @@
     currentCollectionName = name;
     $("#detail-title").textContent = name;
     $("#detail-id").textContent = "ID : " + id;
-    showSection("detail");
+    showRightPanel("detail");
     loadDocuments();
     $("#search-results").hidden = true;
     $("#search-results").innerHTML = "";
@@ -157,7 +244,7 @@
       showToast("Collection supprimée");
       currentCollectionId = null;
       currentCollectionName = null;
-      showSection("list");
+      showRightPanel("create");
       loadCollections();
     } catch (e) {
       showToast(e.message || "Erreur suppression", true);
@@ -165,20 +252,72 @@
   }
 
   $("#btn-back").addEventListener("click", () => {
-    showSection("list");
+    showRightPanel("create");
     loadCollections();
   });
 
   $("#btn-new-collection").addEventListener("click", () => {
-    showSection("create");
+    showRightPanel("create");
     $("#input-collection-name").value = "";
+    fillParentSelect();
     $("#input-collection-name").focus();
     hideMessage("#create-message");
   });
 
   $("#btn-cancel-create").addEventListener("click", () => {
-    showSection("list");
+    showRightPanel("create");
   });
+
+  const btnSources = $("#btn-sources");
+  if (btnSources) btnSources.addEventListener("click", () => showRightPanel("sources"));
+  const btnSourcesBack = $("#btn-sources-back");
+  if (btnSourcesBack) btnSourcesBack.addEventListener("click", () => showRightPanel("create"));
+
+  const formCreateSource = $("#form-create-source");
+  if (formCreateSource) {
+    formCreateSource.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const name = $("#input-source-name") && $("#input-source-name").value.trim();
+      const baseUrl = $("#input-source-base-url") && $("#input-source-base-url").value.trim();
+      const apiKey = $("#input-source-api-key") && $("#input-source-api-key").value.trim();
+      const tableId = $("#input-source-table-id") && $("#input-source-table-id").value.trim();
+      const collectionId = $("#input-source-collection-id") && $("#input-source-collection-id").value.trim();
+      let fieldMapping = {};
+      const mappingEl = $("#input-source-field-mapping");
+      if (mappingEl && mappingEl.value.trim()) {
+        try {
+          fieldMapping = JSON.parse(mappingEl.value.trim());
+        } catch (e) {
+          showMessage("#source-create-message", "Mapping JSON invalide.", "error");
+          return;
+        }
+      }
+      hideMessage("#source-create-message");
+      try {
+        await api("POST", "/sources", {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name || "NocoDB",
+            type: "nocodb",
+            enabled: true,
+            config: {
+              base_url: baseUrl,
+              api_key: apiKey,
+              table_id: tableId,
+              collection_id: collectionId || "nocodb-documents",
+              field_mapping: fieldMapping,
+              limit: 100,
+            },
+          }),
+        });
+        showToast("Connexion ajoutée");
+        formCreateSource.reset();
+        loadSourcesList();
+      } catch (e) {
+        showMessage("#source-create-message", e.message || "Erreur", "error");
+      }
+    });
+  }
 
   $("#btn-delete-collection").addEventListener("click", deleteCollection);
 
@@ -186,14 +325,15 @@
     ev.preventDefault();
     const name = $("#input-collection-name").value.trim();
     if (!name) return;
+    const parentId = $("#input-collection-parent") && $("#input-collection-parent").value ? $("#input-collection-parent").value.trim() || null : null;
     hideMessage("#create-message");
     try {
       await api("POST", "/collections", {
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name }),
+        body: JSON.stringify({ name, parent_id: parentId || undefined }),
       });
-      showToast("Collection créée");
-      showSection("list");
+      showToast(parentId ? "Sous-collection créée" : "Collection créée");
+      showRightPanel("create");
       loadCollections();
     } catch (e) {
       showMessage("#create-message", e.message || "Erreur création", "error");
@@ -275,10 +415,11 @@
     resultsEl.hidden = true;
     resultsEl.innerHTML = "";
     loadingEl.hidden = false;
+    const includeSub = $("#input-include-subcollections") && $("#input-include-subcollections").checked;
     try {
       const data = await api("POST", `/collections/${encodeURIComponent(currentCollectionId)}/search`, {
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ query, top_k: Math.max(1, Math.min(100, topK)) }),
+        body: JSON.stringify({ query, top_k: Math.max(1, Math.min(100, topK)), include_subcollections: includeSub }),
       });
       loadingEl.hidden = true;
       if (!data.results || data.results.length === 0) {
@@ -288,7 +429,12 @@
           const div = document.createElement("div");
           div.className = "search-result-item";
           const dist = r.distance != null ? "Distance : " + r.distance.toFixed(4) : "";
-          const metaStr = r.metadata && (r.metadata.source_file || r.metadata.document_id) ? [r.metadata.source_file, r.metadata.document_id].filter(Boolean).join(" · ") : "";
+          const metaParts = [];
+          if (r.metadata) {
+            if (r.metadata._collection_id) metaParts.push("Collection : " + r.metadata._collection_id);
+            if (r.metadata.source_file || r.metadata.document_id) metaParts.push([r.metadata.source_file, r.metadata.document_id].filter(Boolean).join(" · "));
+          }
+          const metaStr = metaParts.filter(Boolean).join(" — ");
           div.innerHTML = `
             <div class="score">${escapeHtml(dist)}</div>
             <div class="text">${escapeHtml(r.text)}</div>

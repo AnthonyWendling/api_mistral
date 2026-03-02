@@ -9,16 +9,19 @@ class AnalyzeByUrlRequest(BaseModel):
 
 class CollectionCreate(BaseModel):
     name: str = Field(..., min_length=1)
+    parent_id: str | None = Field(None, description="ID de la collection parente pour une sous-collection (recherche vectorielle IA / Mistral)")
 
 
 class CollectionOut(BaseModel):
     id: str
     name: str
+    parent_id: str | None = None
 
 
 class SearchRequest(BaseModel):
     query: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=100)
+    include_subcollections: bool = Field(False, description="Inclure les sous-collections dans la recherche (pour LLM / Mistral)")
 
 
 class SearchResult(BaseModel):
@@ -33,6 +36,7 @@ class RAGRequest(BaseModel):
     collection_id: str = Field(..., min_length=1)
     top_k: int = Field(5, ge=1, le=20)
     system_prompt: str | None = None
+    include_subcollections: bool = Field(False, description="Inclure les sous-collections (recherche IA / Mistral)")
 
 
 class RAGResponse(BaseModel):

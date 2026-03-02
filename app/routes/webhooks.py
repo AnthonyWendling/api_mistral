@@ -41,6 +41,7 @@ class SearchDocumentsRequest(BaseModel):
     query: str = Field(..., min_length=1)
     collection_id: str = Field(..., min_length=1)
     top_k: int = Field(10, ge=1, le=50)
+    include_subcollections: bool = Field(False, description="Inclure les sous-collections (IA / Mistral)")
 
 
 class ClassifyDocumentRequest(BaseModel):
@@ -168,6 +169,7 @@ def rag_webhook(payload: RAGRequest):
             payload.collection_id,
             payload.query,
             top_k=payload.top_k,
+            include_subcollections=payload.include_subcollections,
         )
     except Exception as e:
         err = str(e)
@@ -205,6 +207,7 @@ def search_documents_webhook(payload: SearchDocumentsRequest):
             payload.collection_id,
             payload.query,
             top_k=payload.top_k,
+            include_subcollections=payload.include_subcollections,
         )
     except Exception as e:
         err = str(e)

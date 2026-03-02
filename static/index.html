@@ -8,23 +8,47 @@
 </head>
 <body>
   <header class="header">
-    <h1>Recherche vectorielle</h1>
-    <p class="subtitle">Créez des collections, intégrez des fichiers et testez la recherche sémantique.</p>
+    <h1>Collections vectorielles – IA Mistral</h1>
+    <p class="subtitle">Collections et sous-collections pour la recherche vectorielle (RAG, LLM Mistral). Créez, indexez des fichiers, testez la recherche.</p>
   </header>
 
-  <main class="main">
-    <section id="section-list" class="panel">
+  <main class="main layout-two-cols">
+    <aside class="main-left panel">
       <div class="panel-header">
         <h2>Collections</h2>
-        <button type="button" id="btn-new-collection" class="btn btn-primary">Nouvelle collection</button>
+        <button type="button" id="btn-new-collection" class="btn btn-primary">Nouvelle</button>
       </div>
-      <p class="hint">Un nom clair et une thématique par collection améliorent la précision des résultats.</p>
+      <p class="hint">Collections (racine) et sous-collections pour organiser les index. Une thématique par collection améliore la précision pour l’IA.</p>
       <div id="collections-list" class="collections-list"></div>
       <div id="collections-loading" class="loading">Chargement…</div>
       <div id="collections-error" class="error" hidden></div>
+      <div class="left-footer">
+        <button type="button" id="btn-sources" class="btn btn-text">Connexions API (NocoDB…)</button>
+      </div>
+    </aside>
+
+    <div class="main-right">
+    <section id="section-create" class="panel right-panel">
+      <div class="panel-header">
+        <h2>Nouvelle collection</h2>
+      </div>
+      <p class="hint">Nommez la collection (ex. Contraintes réglementaires, Docs projet X). Optionnel : parente pour une sous-collection.</p>
+      <form id="form-create-collection" class="form-create-collection">
+        <div class="form-group">
+          <label for="input-collection-parent">Collection parente (optionnel)</label>
+          <select id="input-collection-parent" class="input-select">
+            <option value="">— Aucune (collection racine) —</option>
+          </select>
+        </div>
+        <div class="form-inline">
+          <input type="text" id="input-collection-name" placeholder="Nom de la collection ou sous-collection" required />
+          <button type="submit" class="btn btn-primary">Créer</button>
+        </div>
+      </form>
+      <div id="create-message" class="message" hidden></div>
     </section>
 
-    <section id="section-detail" class="panel detail-panel" hidden>
+    <section id="section-detail" class="panel detail-panel right-panel" hidden>
       <div class="panel-header">
         <div>
           <button type="button" id="btn-back" class="btn btn-text">← Retour</button>
@@ -56,13 +80,17 @@
       </div>
 
       <div class="subsection">
-        <h3>Recherche vectorielle</h3>
-        <p class="hint">Testez la pertinence de la collection avec une requête.</p>
+        <h3>Recherche vectorielle (IA / Mistral)</h3>
+        <p class="hint">Testez la pertinence pour le RAG. Cochez « Inclure sous-collections » pour chercher dans toute la branche.</p>
         <form id="form-search" class="search-form">
           <input type="text" id="input-query" placeholder="Votre question ou mots-clés…" required />
           <label>
             Nombre de résultats
             <input type="number" id="input-top-k" value="10" min="1" max="100" />
+          </label>
+          <label class="checkbox-label">
+            <input type="checkbox" id="input-include-subcollections" />
+            Inclure les sous-collections
           </label>
           <button type="submit" class="btn btn-primary">Rechercher</button>
         </form>
@@ -71,18 +99,46 @@
       </div>
     </section>
 
-    <section id="section-create" class="panel modal-panel" hidden>
+    <section id="section-sources" class="panel right-panel" hidden>
       <div class="panel-header">
-        <h2>Nouvelle collection</h2>
-        <button type="button" id="btn-cancel-create" class="btn btn-text">Annuler</button>
+        <h2>Connexions API</h2>
+        <button type="button" id="btn-sources-back" class="btn btn-text">← Collections</button>
       </div>
-      <p class="hint">Nommez la collection selon son usage (ex. Contraintes réglementaires, Docs projet X).</p>
-      <form id="form-create-collection" class="form-inline">
-        <input type="text" id="input-collection-name" placeholder="Nom de la collection" required />
-        <button type="submit" class="btn btn-primary">Créer</button>
+      <p class="hint">Connectez une table NocoDB (ou autre) pour indexer les documents enregistrés via les endpoints adaptés.</p>
+      <div id="sources-list" class="sources-list"></div>
+      <div id="sources-loading" class="loading">Chargement…</div>
+      <h3>Ajouter une connexion NocoDB</h3>
+      <p class="hint">Base URL de l'API NocoDB, token, ID de table. Collection : id fixe ou template ex. <code>nocodb-affaire-{{affaire_id}}</code>. Mapping : noms de champs NocoDB → paramètres (file_url, document_id, nocodb_record_id, affaire_id, numero_affaire).</p>
+      <form id="form-create-source" class="form-source">
+        <div class="form-group">
+          <label for="input-source-name">Nom</label>
+          <input type="text" id="input-source-name" class="input-inline" placeholder="Ex. Table Documents Affaires" required />
+        </div>
+        <div class="form-group">
+          <label for="input-source-base-url">URL API NocoDB</label>
+          <input type="text" id="input-source-base-url" class="input-inline" placeholder="https://xxx.nocodb.com" required />
+        </div>
+        <div class="form-group">
+          <label for="input-source-api-key">Token API (xc-token)</label>
+          <input type="password" id="input-source-api-key" class="input-inline" placeholder="Optionnel si public" />
+        </div>
+        <div class="form-group">
+          <label for="input-source-table-id">ID de la table</label>
+          <input type="text" id="input-source-table-id" class="input-inline" placeholder="Ex. mx_abc123" required />
+        </div>
+        <div class="form-group">
+          <label for="input-source-collection-id">Collection (id ou template)</label>
+          <input type="text" id="input-source-collection-id" class="input-inline" placeholder="nocodb-affaire-{{affaire_id}}" required />
+        </div>
+        <div class="form-group">
+          <label for="input-source-field-mapping">Mapping des champs (JSON)</label>
+          <textarea id="input-source-field-mapping" class="input-textarea" rows="4" placeholder='{"file_url": "Attachment", "document_id": "Id", "nocodb_record_id": "Id", "affaire_id": "affaire_id"}'></textarea>
+        </div>
+        <button type="submit" class="btn btn-primary">Ajouter la connexion</button>
       </form>
-      <div id="create-message" class="message" hidden></div>
+      <div id="source-create-message" class="message" hidden></div>
     </section>
+    </div>
   </main>
 
   <div id="toast" class="toast" hidden></div>

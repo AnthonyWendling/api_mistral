@@ -16,6 +16,15 @@ from app.services.vector_store_service import (
     search as vector_search,
 )
 from app.services.document_classification import get_all_category_collection_specs
+from app.services.sources_service import (
+    create_source,
+    delete_source,
+    get_source,
+    list_sources,
+    update_source,
+    sync_nocodb_source,
+)
+from app.schemas.sources import SourceCreate, SourceUpdate, SourceOut
 
 router = APIRouter()
 
@@ -24,13 +33,31 @@ MAX_BYTES = settings.max_file_size_mb * 1024 * 1024
 
 @router.post("/collections", response_model=CollectionOut)
 def create_collection_route(payload: CollectionCreate):
-    id_ = create_collection(payload.name)
-    return CollectionOut(id=id_, name=payload.name)
+    id_ = create_collection(payload.name, parent_id=payload.parent_id)
+    parent_id = payload.parent_id
+    return CollectionOut(id=id_, name=payload.name, parent_id=parent_id)
 
 
 @router.get("/collections")
-def list_collections_route():
-    return {"collections": list_collections()}
+def list_collections_route(tree: bool = False):
+    """
+    Liste les collections (et sous-collections). Pour l'IA / recherche vectorielle Mistral.
+    tree=true : retourne un arbre { "collections": [ { "id", "name", "parent_id", "children": [...] } ] }.
+    tree=false : liste plate avec parent_id.
+    """
+    flat = list_collections()
+    if not tree:
+        return {"collections": flat}
+    by_id = {c["id"]: {**c, "children": []} for c in flat}
+    roots = []
+    for c in flat:
+        node = by_id[c["id"]]
+        pid = c.get("parent_id")
+        if not pid or pid not in by_id:
+            roots.append(node)
+        else:
+            by_id[pid]["children"].append(node)
+    return {"collections": roots}
 
 
 @router.get("/collections/category-specs")
@@ -51,7 +78,7 @@ def ensure_collection_route(payload: CollectionCreate):
     pour s'assurer que la collection existe.
     """
     existing = {c["id"] for c in list_collections()}
-    id_ = create_collection(payload.name)
+    id_ = create_collection(payload.name, parent_id=payload.parent_id)
     created = id_ not in existing
     return {"id": id_, "created": created}
 
@@ -189,8 +216,76 @@ def list_documents_route(collection_id: str, limit: int = 2000):
 
 @router.post("/collections/{collection_id}/search")
 def search_route(collection_id: str, payload: SearchRequest):
+    """
+    Recherche vectorielle pour l'IA / LLM Mistral.
+    include_subcollections=true : cherche dans cette collection et toutes les sous-collections.
+    """
     try:
-        results = vector_search(collection_id, payload.query, top_k=payload.top_k)
+        results = vector_search(
+            collection_id,
+            payload.query,
+            top_k=payload.top_k,
+            include_subcollections=payload.include_subcollections,
+        )
     except Exception as e:
         raise HTTPException(404, f"Collection non trouvée ou erreur: {e}")
     return {"results": [SearchResult(**r) for r in results]}
+
+
+# --- Connexions API (sources) : NocoDB, etc. ---
+
+
+@router.get("/sources", response_model=list[SourceOut])
+def list_sources_route():
+    """Liste les connexions API configurées (NocoDB, etc.) pour indexer des documents."""
+    return list_sources()
+
+
+@router.get("/sources/{source_id}")
+def get_source_route(source_id: str):
+    """Détail d'une source (config sans clé API en clair)."""
+    s = get_source(source_id)
+    if not s:
+        raise HTTPException(404, "Source non trouvée")
+    cfg = dict(s.get("config", {}))
+    if cfg.get("api_key"):
+        cfg["api_key"] = "********"
+    return {"id": s["id"], "name": s["name"], "type": s["type"], "enabled": s.get("enabled", True), "config": cfg}
+
+
+@router.post("/sources", response_model=SourceOut)
+def create_source_route(payload: SourceCreate):
+    """Crée une connexion API (ex. table NocoDB) pour indexer des documents."""
+    created = create_source(payload.model_dump())
+    if created.get("config", {}).get("api_key"):
+        created = {**created, "config": {**created["config"], "api_key": "********"}}
+    return SourceOut(**created)
+
+
+@router.put("/sources/{source_id}")
+def update_source_route(source_id: str, payload: SourceUpdate):
+    """Met à jour une source (nom, config, enabled)."""
+    updated = update_source(source_id, payload.model_dump(exclude_unset=True))
+    if not updated:
+        raise HTTPException(404, "Source non trouvée")
+    return updated
+
+
+@router.delete("/sources/{source_id}")
+def delete_source_route(source_id: str):
+    """Supprime une connexion API."""
+    if not delete_source(source_id):
+        raise HTTPException(404, "Source non trouvée")
+    return {"deleted": source_id}
+
+
+@router.post("/sources/{source_id}/sync")
+async def sync_source_route(source_id: str):
+    """
+    Lance la synchronisation : récupère les enregistrements de la source (ex. NocoDB),
+    assure les collections et indexe chaque document dans le store vectoriel.
+    """
+    result = await sync_nocodb_source(source_id)
+    if not result.get("ok") and "error" in result:
+        raise HTTPException(502, result["error"])
+    return result
