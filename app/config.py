@@ -14,8 +14,8 @@ class Settings(BaseSettings):
     chunk_size: int = 512
     chunk_overlap: int = 128
     # Authentification interface (si vides, pas d'auth)
-    interface_code: str = ""
-    interface_password: str = ""
+    interface_code: str = "AnthonyWendlingAPIMistral"
+    interface_password: str = "&RlHB17oXIUcr&"
     interface_secret_key: str = "change-me-in-production"
 
 
