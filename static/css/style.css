@@ -128,7 +128,7 @@ body {
 
 .main.layout-two-cols {
   display: grid;
-  grid-template-columns: 320px 1fr;
+  grid-template-columns: 1fr 1fr;
   gap: 0;
   min-height: calc(100vh - 5rem);
 }
@@ -148,7 +148,7 @@ body {
 }
 
 .main-right .right-panel {
-  max-width: 720px;
+  max-width: 100%;
 }
 
 @media (max-width: 768px) {
