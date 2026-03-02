@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
@@ -92,6 +92,15 @@ def health():
 def documentation_redirect():
     """Redirection vers la documentation Swagger UI."""
     return RedirectResponse(url="/docs", status_code=302)
+
+
+@app.get("/favicon.ico", include_in_schema=False)
+def favicon():
+    """Évite le 404 quand le navigateur demande un favicon."""
+    fav = STATIC_DIR / "favicon.ico"
+    if fav.exists():
+        return FileResponse(fav)
+    return Response(status_code=204)
 
 
 @app.get("/")

@@ -360,6 +360,16 @@ body {
   font-weight: 500;
 }
 
+.source-type-tabs {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 0.75rem;
+}
+.source-type-tabs .source-tab.active {
+  font-weight: 600;
+  border-bottom: 2px solid var(--primary, #2563eb);
+}
+
 .source-row .source-type {
   font-size: 0.8rem;
   color: var(--text-muted);

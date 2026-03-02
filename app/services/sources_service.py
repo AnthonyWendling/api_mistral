@@ -33,14 +33,21 @@ def _slug(s: str) -> str:
     return re.sub(r"[^a-z0-9_-]", "-", (s or "").lower()).strip("-") or "default"
 
 
+def _mask_secrets(config: dict) -> dict:
+    """Masque les secrets dans la config pour l'affichage."""
+    cfg = dict(config)
+    for key in ("api_key", "client_secret"):
+        if cfg.get(key):
+            cfg[key] = "********"
+    return cfg
+
+
 def list_sources() -> list[dict]:
     """Liste toutes les sources (sans exposer les clés API en clair dans les configs sensibles)."""
     raw = _load_sources()
     out = []
     for s in raw:
-        cfg = dict(s.get("config", {}))
-        if cfg.get("api_key"):
-            cfg["api_key"] = "********"
+        cfg = _mask_secrets(s.get("config", {}))
         out.append({
             "id": s.get("id", ""),
             "name": s.get("name", ""),
@@ -89,7 +96,7 @@ def update_source(source_id: str, payload: dict) -> dict | None:
                 existing.update(payload["config"])
                 sources[i]["config"] = existing
             _save_sources(sources)
-            return {**sources[i], "config": {k: "********" if k == "api_key" and v else v for k, v in sources[i]["config"].items()}}
+            return {**sources[i], "config": _mask_secrets(sources[i].get("config", {}))}
     return None
 
 
@@ -186,7 +193,20 @@ async def sync_nocodb_source(source_id: str) -> dict:
                     r2 = await c2.get(file_url)
                     r2.raise_for_status()
                     content = r2.content
-                fn = (file_url or "").split("/")[-1] or "document"
+                    fn = (file_url or "").split("/")[-1] or "document"
+                    cd = r2.headers.get("content-disposition") or ""
+                    if "filename=" in cd:
+                        m = re.search(r'filename\*?=(?:UTF-8\'?\')?["\']?([^"\';\s]+)', cd, re.I)
+                        if not m:
+                            m = re.search(r'filename=["\']?([^"\';\s]+)', cd, re.I)
+                        if m:
+                            fn = m.group(1).strip()
+                    if not fn or fn == "download" or "." not in fn:
+                        src_key = field_mapping.get("source_file") or field_mapping.get("filename")
+                        if src_key and row.get(src_key):
+                            fn = str(row.get(src_key)).strip()
+                    if not fn or "." not in fn:
+                        fn = fn or "document"
                 text = extract_text(content, filename=fn)
             except Exception as e1:
                 errors.append(f"Record {doc_id}: {e1}")
@@ -210,5 +230,185 @@ async def sync_nocodb_source(source_id: str) -> dict:
         "ok": True,
         "indexed": indexed_total,
         "records_fetched": len(records),
+        "errors": errors[:10],
+    }
+
+
+# --- SharePoint (Microsoft Graph) ---
+
+GRAPH_BASE = "https://graph.microsoft.com/v1.0"
+GRAPH_SCOPE = "https://graph.microsoft.com/.default"
+SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".xlsx", ".pptx", ".png", ".jpg", ".jpeg", ".gif", ".txt"}
+
+
+async def _get_graph_token(tenant_id: str, client_id: str, client_secret: str) -> str:
+    """Obtient un token d'accès Microsoft Graph (client credentials)."""
+    url = f"https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0/token"
+    async with httpx.AsyncClient(timeout=30.0) as client:
+        r = await client.post(
+            url,
+            data={
+                "grant_type": "client_credentials",
+                "client_id": client_id,
+                "client_secret": client_secret,
+                "scope": GRAPH_SCOPE,
+            },
+            headers={"Content-Type": "application/x-www-form-urlencoded"},
+        )
+        r.raise_for_status()
+        return r.json()["access_token"]
+
+
+def _parse_site_url(site_url: str) -> tuple[str, str]:
+    """Extrait hostname et chemin serveur depuis l'URL du site (ex. https://contoso.sharepoint.com/sites/MySite)."""
+    from urllib.parse import urlparse, quote
+    parsed = urlparse(site_url.rstrip("/"))
+    hostname = parsed.netloc or ""
+    path = (parsed.path or "/").strip()
+    if not path.startswith("/"):
+        path = "/" + path
+    path_encoded = quote(path, safe="/")
+    return hostname, path_encoded
+
+
+async def _graph_get(token: str, path: str, params: dict | None = None) -> dict:
+    """GET sur l'API Microsoft Graph."""
+    url = f"{GRAPH_BASE}{path}" if path.startswith("/") else f"{GRAPH_BASE}/{path}"
+    async with httpx.AsyncClient(timeout=60.0) as client:
+        r = await client.get(url, headers={"Authorization": f"Bearer {token}"}, params=params or {})
+        r.raise_for_status()
+        return r.json()
+
+
+async def _list_files_in_folder(
+    token: str,
+    site_id: str,
+    drive_id: str,
+    folder_path: str,
+    limit: int,
+    collected: list[dict],
+    prefix: str = "",
+) -> None:
+    """Liste récursivement les fichiers d'un dossier (Graph API). Remplit collected (max limit)."""
+    if len(collected) >= limit:
+        return
+    path = f"/sites/{site_id}/drive/root:/{folder_path}:/children" if folder_path else f"/sites/{site_id}/drive/root/children"
+    params = {"$select": "id,name,file,folder,parentReference,@microsoft.graph.downloadUrl"}
+    try:
+        data = await _graph_get(token, path, params)
+        items = data.get("value", [])
+    except Exception:
+        items = []
+    for item in items:
+        if len(collected) >= limit:
+            return
+        name = item.get("name", "")
+        if item.get("folder"):
+            sub_path = f"{folder_path}/{name}".strip("/") if folder_path else name
+            await _list_files_in_folder(token, site_id, drive_id, sub_path, limit, collected, prefix=f"{prefix}{name}/")
+        elif item.get("file"):
+            ext = (Path(name).suffix or "").lower()
+            if ext in SUPPORTED_EXTENSIONS:
+                download_url = item.get("@microsoft.graph.downloadUrl")
+                if download_url:
+                    collected.append({
+                        "id": item.get("id"),
+                        "name": name,
+                        "download_url": download_url,
+                        "folder_path": prefix.rstrip("/"),
+                        "drive_id": drive_id,
+                        "site_id": site_id,
+                    })
+
+
+async def sync_sharepoint_source(source_id: str) -> dict:
+    """
+    Synchronise une source SharePoint : récupère les fichiers du site/dossier via Microsoft Graph,
+    télécharge chaque fichier supporté, extrait le texte et indexe dans la collection.
+    """
+    source = get_source(source_id)
+    if not source:
+        return {"ok": False, "error": "Source non trouvée", "indexed": 0}
+    if source.get("type") != "sharepoint":
+        return {"ok": False, "error": "Type de source non supporté pour sync", "indexed": 0}
+    config = source.get("config", {})
+    tenant_id = (config.get("tenant_id") or "").strip()
+    client_id = (config.get("client_id") or "").strip()
+    client_secret = config.get("client_secret") or ""
+    site_url = (config.get("site_url") or "").strip().rstrip("/")
+    folder_path = (config.get("folder_path") or "").strip().strip("/")
+    collection_id = (config.get("collection_id") or "sharepoint-documents").strip()
+    limit = int(config.get("limit", 200))
+    if not all([tenant_id, client_id, client_secret, site_url]):
+        return {"ok": False, "error": "tenant_id, client_id, client_secret et site_url requis", "indexed": 0}
+
+    try:
+        token = await _get_graph_token(tenant_id, client_id, client_secret)
+    except httpx.HTTPStatusError as e:
+        return {"ok": False, "error": f"Graph auth: {e.response.status_code}", "indexed": 0}
+    except Exception as e:
+        return {"ok": False, "error": str(e), "indexed": 0}
+
+    hostname, server_path = _parse_site_url(site_url)
+    if not hostname:
+        return {"ok": False, "error": "site_url invalide", "indexed": 0}
+    try:
+        site_res = await _graph_get(token, f"/sites/{hostname}:{server_path}")
+        site_id = site_res.get("id")
+        drive_id = site_res.get("drive", {}).get("id")
+        if not drive_id:
+            drive_res = await _graph_get(token, f"/sites/{site_id}/drive")
+            drive_id = drive_res.get("id")
+    except Exception as e:
+        return {"ok": False, "error": f"Site/Drive: {e}", "indexed": 0}
+    if not site_id or not drive_id:
+        return {"ok": False, "error": "Impossible de résoudre le site ou le drive", "indexed": 0}
+
+    files: list[dict] = []
+    await _list_files_in_folder(token, site_id, drive_id, folder_path, limit, files)
+
+    from app.services.vector_store_service import add_documents
+    from app.services.extraction import extract_text
+
+    existing = {c["id"] for c in list_collections()}
+    if collection_id not in existing:
+        create_collection(collection_id)
+
+    indexed_total = 0
+    errors = []
+    for f in files:
+        try:
+            async with httpx.AsyncClient(follow_redirects=True, timeout=90.0) as client:
+                r = await client.get(f["download_url"])
+                r.raise_for_status()
+                content = r.content
+            fn = f.get("name", "document")
+            text = extract_text(content, filename=fn)
+            if not text:
+                continue
+            meta = {
+                "sharepoint_item_id": f.get("id"),
+                "drive_id": f.get("drive_id"),
+                "site_id": f.get("site_id"),
+                "folder_path": f.get("folder_path", ""),
+            }
+            doc_id = f.get("id") or fn
+            n = add_documents(
+                collection_id,
+                [text],
+                document_id=doc_id,
+                source_file=fn,
+                file_url="",
+                metadata_per_doc=meta,
+                deduplicate=True,
+            )
+            indexed_total += n
+        except Exception as e1:
+            errors.append(f"{f.get('name', '?')}: {e1}")
+
+    return {
+        "ok": True,
+        "indexed": indexed_total,
+        "files_fetched": len(files),
         "errors": errors[:10],
     }

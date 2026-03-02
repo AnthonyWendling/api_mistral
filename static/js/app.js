@@ -72,12 +72,17 @@
     const url = path.startsWith("http") ? path : API_BASE + path;
     const res = await fetch(url, {
       method,
+      credentials: "include",
       headers: options.headers || {},
       body: options.body,
     });
     if (!res.ok) {
       const err = await res.json().catch(() => ({ detail: res.statusText }));
-      throw new Error(err.detail || err.message || res.statusText);
+      const msg = err.detail || err.message || res.statusText;
+      const errObj = new Error(msg);
+      errObj.status = res.status;
+      errObj.errors = err.errors;
+      throw errObj;
     }
     if (res.status === 204) return null;
     return res.json();
@@ -171,16 +176,17 @@
       const sources = Array.isArray(data) ? data : (data.sources || data);
       if (loading) loading.hidden = true;
       if (!sources || sources.length === 0) {
-        list.innerHTML = "<p class=\"empty\">Aucune connexion. Ajoutez une table NocoDB ci-dessous.</p>";
+        list.innerHTML = "<p class=\"empty\">Aucune connexion. Ajoutez une source NocoDB ou SharePoint ci-dessous.</p>";
         return;
       }
+      const typeLabel = { nocodb: "NocoDB", sharepoint: "SharePoint" };
       sources.forEach((s) => {
         const row = document.createElement("div");
         row.className = "source-row";
         row.innerHTML = `
           <div class="source-info">
             <span class="source-name">${escapeHtml(s.name)}</span>
-            <span class="source-type">${escapeHtml(s.type)}</span>
+            <span class="source-type">${escapeHtml(typeLabel[s.type] || s.type)}</span>
           </div>
           <div class="source-actions">
             <button type="button" class="btn btn-primary btn-sync-source" data-id="${escapeHtml(s.id)}">Indexer</button>
@@ -202,10 +208,13 @@
     if (btn) btn.disabled = true;
     try {
       const result = await api("POST", "/sources/" + encodeURIComponent(sourceId) + "/sync");
-      showToast("Indexation : " + (result.indexed || 0) + " chunk(s). " + (result.errors && result.errors.length ? result.errors.length + " erreur(s)." : ""));
+      const count = result.records_fetched ?? result.files_fetched ?? 0;
+      showToast("Indexation : " + (result.indexed || 0) + " chunk(s)" + (count ? " (" + count + " fichier(s) traités)" : "") + (result.errors && result.errors.length ? ". " + result.errors.length + " erreur(s)." : ""));
       loadSourcesList();
     } catch (e) {
-      showToast(e.message || "Erreur sync", true);
+      let msg = e.message || "Erreur sync";
+      if (e.errors && e.errors.length) msg += " — " + e.errors.slice(0, 2).join(" ; ");
+      showToast(msg, true);
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -450,6 +459,74 @@
         });
         showToast("Connexion ajoutée");
         formCreateSource.reset();
+        loadSourcesList();
+      } catch (e) {
+        showMessage("#source-create-message", e.message || "Erreur", "error");
+      }
+    });
+  }
+
+  const btnTabNocodb = $("#btn-tab-nocodb");
+  const btnTabSharepoint = $("#btn-tab-sharepoint");
+  const formNocodb = $("#form-create-source");
+  const formSharepoint = $("#form-create-source-sharepoint");
+  const sourceFormTitle = $("#source-form-title");
+  if (btnTabNocodb && btnTabSharepoint) {
+    btnTabNocodb.addEventListener("click", () => {
+      btnTabNocodb.classList.add("active");
+      if (btnTabSharepoint) btnTabSharepoint.classList.remove("active");
+      if (formNocodb) formNocodb.hidden = false;
+      if (formSharepoint) formSharepoint.hidden = true;
+      if (sourceFormTitle) sourceFormTitle.textContent = "Ajouter une connexion NocoDB";
+    });
+    btnTabSharepoint.addEventListener("click", () => {
+      btnTabSharepoint.classList.add("active");
+      if (btnTabNocodb) btnTabNocodb.classList.remove("active");
+      if (formSharepoint) formSharepoint.hidden = false;
+      if (formNocodb) formNocodb.hidden = true;
+      if (sourceFormTitle) sourceFormTitle.textContent = "Ajouter une connexion SharePoint";
+    });
+  }
+
+  const formCreateSourceSharepoint = $("#form-create-source-sharepoint");
+  if (formCreateSourceSharepoint) {
+    formCreateSourceSharepoint.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const name = $("#input-sp-name") && $("#input-sp-name").value.trim();
+      const tenantId = $("#input-sp-tenant-id") && $("#input-sp-tenant-id").value.trim();
+      const clientId = $("#input-sp-client-id") && $("#input-sp-client-id").value.trim();
+      const clientSecret = $("#input-sp-client-secret") && $("#input-sp-client-secret").value;
+      const siteUrl = $("#input-sp-site-url") && $("#input-sp-site-url").value.trim();
+      const folderPath = $("#input-sp-folder-path") && $("#input-sp-folder-path").value.trim();
+      const collectionId = ($("#input-sp-collection-id") && $("#input-sp-collection-id").value.trim()) || "sharepoint-documents";
+      const limit = parseInt($("#input-sp-limit") && $("#input-sp-limit").value, 10) || 200;
+      if (!name || !tenantId || !clientId || !clientSecret || !siteUrl) {
+        showMessage("#source-create-message", "Nom, Tenant ID, Client ID, Client Secret et URL du site requis.", "error");
+        return;
+      }
+      hideMessage("#source-create-message");
+      try {
+        await api("POST", "/sources", {
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: name,
+            type: "sharepoint",
+            enabled: true,
+            config: {
+              tenant_id: tenantId,
+              client_id: clientId,
+              client_secret: clientSecret,
+              site_url: siteUrl,
+              folder_path: folderPath || "",
+              collection_id: collectionId,
+              limit: Math.max(1, Math.min(1000, limit)),
+            },
+          }),
+        });
+        showToast("Connexion SharePoint ajoutée");
+        formCreateSourceSharepoint.reset();
+        $("#input-sp-collection-id").value = "sharepoint-documents";
+        $("#input-sp-limit").value = "200";
         loadSourcesList();
       } catch (e) {
         showMessage("#source-create-message", e.message || "Erreur", "error");

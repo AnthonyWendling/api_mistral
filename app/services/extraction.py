@@ -29,6 +29,30 @@ def _normalize_extension(filename: str | None, content_type: str | None) -> str:
     return ext or ".bin"
 
 
+def _sniff_extension(content: bytes) -> str:
+    """Détecte l'extension à partir des magic bytes (quand l'URL ne donne pas de nom de fichier, ex. NocoDB)."""
+    if not content or len(content) < 8:
+        return ".bin"
+    if content[:4] == b"%PDF":
+        return ".pdf"
+    if content[:2] == b"PK":
+        # ZIP (DOCX, XLSX, PPTX)
+        if b"word/" in content[:2000] or b"[Content_Types].xml" in content[:2000]:
+            return ".docx"
+        if b"xl/" in content[:2000] or b"xl/workbook" in content[:2000]:
+            return ".xlsx"
+        if b"ppt/" in content[:2000] or b"ppt/slides" in content[:2000]:
+            return ".pptx"
+        return ".docx"
+    if content[:8] == b"\x89PNG\r\n\x1a\n":
+        return ".png"
+    if content[:2] == b"\xff\xd8":
+        return ".jpg"
+    if content[:6] in (b"GIF87a", b"GIF89a"):
+        return ".gif"
+    return ".bin"
+
+
 def extract_text_from_pdf(content: bytes, filename: str = "") -> str:
     reader = PdfReader(io.BytesIO(content))
     parts = []
@@ -87,6 +111,8 @@ EXTRACTORS = {
 
 def extract_text(content: bytes, filename: str | None = None, content_type: str | None = None) -> str:
     ext = _normalize_extension(filename or "", content_type)
+    if ext == ".bin":
+        ext = _sniff_extension(content)
     extractor = EXTRACTORS.get(ext)
     if not extractor:
         raise ValueError(f"Type de document non supporté: {ext or 'inconnu'}. Supportés: PDF, DOCX, XLSX, PPTX, PNG, JPG, GIF.")

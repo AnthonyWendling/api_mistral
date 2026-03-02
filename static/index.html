@@ -170,19 +170,23 @@
         <h2>Connexions API</h2>
         <button type="button" id="btn-sources-back" class="btn btn-text">← Collections</button>
       </div>
-      <p class="hint">Connectez une table NocoDB (ou autre) pour indexer les documents enregistrés via les endpoints adaptés.</p>
+      <p class="hint">Connectez une table NocoDB, un site SharePoint (Microsoft Graph) ou une autre source pour indexer les documents.</p>
       <div id="sources-list" class="sources-list"></div>
       <div id="sources-loading" class="loading">Chargement…</div>
-      <h3>Ajouter une connexion NocoDB</h3>
+      <div class="source-type-tabs">
+        <button type="button" id="btn-tab-nocodb" class="btn btn-text source-tab active">NocoDB</button>
+        <button type="button" id="btn-tab-sharepoint" class="btn btn-text source-tab">SharePoint</button>
+      </div>
+      <h3 id="source-form-title">Ajouter une connexion NocoDB</h3>
       <p class="hint">Base URL de l'API NocoDB, token, ID de table. Collection : id fixe ou template ex. <code>nocodb-affaire-{{affaire_id}}</code>. Mapping : noms de champs NocoDB → paramètres (file_url, document_id, nocodb_record_id, affaire_id, numero_affaire).</p>
-      <form id="form-create-source" class="form-source">
+      <form id="form-create-source" class="form-source form-source-nocodb">
         <div class="form-group">
           <label for="input-source-name">Nom</label>
           <input type="text" id="input-source-name" class="input-inline" placeholder="Ex. Table Documents Affaires" required />
         </div>
         <div class="form-group">
           <label for="input-source-base-url">URL API NocoDB</label>
-          <input type="text" id="input-source-base-url" class="input-inline" placeholder="https://xxx.nocodb.com" required />
+          <input type="text" id="input-source-base-url" class="input-inline" placeholder="https://xxx.nocodb.com" />
         </div>
         <div class="form-group">
           <label for="input-source-api-key">Token API (xc-token)</label>
@@ -190,17 +194,52 @@
         </div>
         <div class="form-group">
           <label for="input-source-table-id">ID de la table</label>
-          <input type="text" id="input-source-table-id" class="input-inline" placeholder="Ex. mx_abc123" required />
+          <input type="text" id="input-source-table-id" class="input-inline" placeholder="Ex. mx_abc123" />
         </div>
         <div class="form-group">
           <label for="input-source-collection-id">Collection (id ou template)</label>
-          <input type="text" id="input-source-collection-id" class="input-inline" placeholder="nocodb-affaire-{{affaire_id}}" required />
+          <input type="text" id="input-source-collection-id" class="input-inline" placeholder="nocodb-affaire-{{affaire_id}}" />
         </div>
         <div class="form-group">
           <label for="input-source-field-mapping">Mapping des champs (JSON)</label>
           <textarea id="input-source-field-mapping" class="input-textarea" rows="4" placeholder='{"file_url": "Attachment", "document_id": "Id", "nocodb_record_id": "Id", "affaire_id": "affaire_id"}'></textarea>
         </div>
-        <button type="submit" class="btn btn-primary">Ajouter la connexion</button>
+        <button type="submit" class="btn btn-primary">Ajouter la connexion NocoDB</button>
+      </form>
+      <form id="form-create-source-sharepoint" class="form-source form-source-sharepoint" hidden>
+        <div class="form-group">
+          <label for="input-sp-name">Nom</label>
+          <input type="text" id="input-sp-name" class="input-inline" placeholder="Ex. Site partagé Documents" required />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-tenant-id">Tenant ID (Azure AD)</label>
+          <input type="text" id="input-sp-tenant-id" class="input-inline" placeholder="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-client-id">Client ID (Application)</label>
+          <input type="text" id="input-sp-client-id" class="input-inline" placeholder="ID de l’app Azure" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-client-secret">Client Secret</label>
+          <input type="password" id="input-sp-client-secret" class="input-inline" placeholder="Secret de l’app Azure" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-site-url">URL du site SharePoint</label>
+          <input type="text" id="input-sp-site-url" class="input-inline" placeholder="https://contoso.sharepoint.com/sites/MonSite" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-folder-path">Dossier (optionnel)</label>
+          <input type="text" id="input-sp-folder-path" class="input-inline" placeholder="Ex. Documents partagés/Affaires" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-collection-id">Collection d’indexation</label>
+          <input type="text" id="input-sp-collection-id" class="input-inline" placeholder="sharepoint-documents" value="sharepoint-documents" />
+        </div>
+        <div class="form-group">
+          <label for="input-sp-limit">Nombre max de fichiers par sync</label>
+          <input type="number" id="input-sp-limit" class="input-inline" value="200" min="1" max="1000" />
+        </div>
+        <button type="submit" class="btn btn-primary">Ajouter la connexion SharePoint</button>
       </form>
       <div id="source-create-message" class="message" hidden></div>
     </section>

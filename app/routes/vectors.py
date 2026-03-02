@@ -28,6 +28,7 @@ from app.services.sources_service import (
     list_sources,
     update_source,
     sync_nocodb_source,
+    sync_sharepoint_source,
 )
 from app.schemas.sources import SourceCreate, SourceUpdate, SourceOut
 
@@ -203,15 +204,18 @@ async def ranger_document(
     puis indexe le document dans les collections suggérées par l'IA et dans la collection de l'affaire.
     Fournir soit un fichier (multipart), soit file_url (form).
     """
-    if file and file.filename:
+    if file and getattr(file, "filename", None):
         content = await file.read()
         if len(content) > MAX_BYTES:
             raise HTTPException(400, f"Fichier trop volumineux (max {settings.max_file_size_mb} Mo)")
         filename = file.filename
-    elif file_url:
-        content, filename = await _get_file_from_url(file_url)
+    elif file_url and str(file_url).strip():
+        content, filename = await _get_file_from_url(file_url.strip())
     else:
-        raise HTTPException(400, "Fournir soit un fichier (multipart), soit file_url (form).")
+        raise HTTPException(
+            400,
+            "Fournir soit un fichier (champ 'file' en multipart), soit une URL (champ 'file_url').",
+        )
 
     try:
         text = extract_text(content, filename=filename)
@@ -383,10 +387,25 @@ def delete_source_route(source_id: str):
 @router.post("/sources/{source_id}/sync")
 async def sync_source_route(source_id: str):
     """
-    Lance la synchronisation : récupère les enregistrements de la source (ex. NocoDB),
-    assure les collections et indexe chaque document dans le store vectoriel.
+    Lance la synchronisation : récupère les enregistrements de la source (NocoDB, SharePoint, etc.)
+    et indexe chaque document dans le store vectoriel.
     """
-    result = await sync_nocodb_source(source_id)
+    source = get_source(source_id)
+    if not source:
+        raise HTTPException(404, "Source non trouvée")
+    src_type = source.get("type", "nocodb")
+    if src_type == "sharepoint":
+        result = await sync_sharepoint_source(source_id)
+    else:
+        result = await sync_nocodb_source(source_id)
     if not result.get("ok") and "error" in result:
-        raise HTTPException(502, result["error"])
+        from fastapi.responses import JSONResponse
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": result["error"],
+                "indexed": result.get("indexed", 0),
+                "errors": result.get("errors", []),
+            },
+        )
     return result
