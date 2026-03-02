@@ -100,15 +100,43 @@
         list.innerHTML = "<p class=\"empty\">Aucune collection. Créez-en une (ou une sous-collection).</p>";
         return;
       }
-      function renderNode(node, depth) {
-        const card = document.createElement("div");
-        card.className = "collection-card" + (depth > 0 ? " collection-card--child" : "");
-        card.style.setProperty("--depth", String(depth));
-        const subLabel = depth > 0 ? "<span class=\"card-sub\">sous-collection</span> " : "";
-        card.innerHTML = `<div>${subLabel}<span class="name">${escapeHtml(node.name)}</span><br><span class="id">${escapeHtml(node.id)}</span></div>`;
-        card.addEventListener("click", (e) => { e.stopPropagation(); openCollection(node.id, node.name); });
-        list.appendChild(card);
-        (node.children || []).forEach((child) => renderNode(child, depth + 1));
+      function renderNode(node, depth, parentWrap) {
+        const hasChildren = (node.children || []).length > 0;
+        if (hasChildren && depth === 0) {
+          const group = document.createElement("div");
+          group.className = "collection-group";
+          const card = document.createElement("div");
+          card.className = "collection-card collection-card--parent";
+          card.innerHTML = `
+            <span class="collection-toggle" aria-label="Replier / déplier">▼</span>
+            <div class="collection-card-body">
+              <span class="name">${escapeHtml(node.name)}</span><br><span class="id">${escapeHtml(node.id)}</span>
+            </div>`;
+          const toggle = card.querySelector(".collection-toggle");
+          const childrenWrap = document.createElement("div");
+          childrenWrap.className = "collection-children";
+          (node.children || []).forEach((child) => renderNode(child, depth + 1, childrenWrap));
+          toggle.addEventListener("click", (e) => {
+            e.stopPropagation();
+            childrenWrap.classList.toggle("collapsed");
+            toggle.textContent = childrenWrap.classList.contains("collapsed") ? "▶" : "▼";
+            toggle.setAttribute("aria-label", childrenWrap.classList.contains("collapsed") ? "Déplier" : "Replier");
+          });
+          card.querySelector(".collection-card-body").addEventListener("click", (e) => { e.stopPropagation(); openCollection(node.id, node.name); });
+          group.appendChild(card);
+          group.appendChild(childrenWrap);
+          list.appendChild(group);
+        } else {
+          const card = document.createElement("div");
+          card.className = "collection-card" + (depth > 0 ? " collection-card--child" : "");
+          card.style.setProperty("--depth", String(depth));
+          const subLabel = depth > 0 ? "<span class=\"card-sub\">sous-collection</span> " : "";
+          card.innerHTML = `<div>${subLabel}<span class="name">${escapeHtml(node.name)}</span><br><span class="id">${escapeHtml(node.id)}</span></div>`;
+          card.addEventListener("click", (e) => { e.stopPropagation(); openCollection(node.id, node.name); });
+          const target = parentWrap || list;
+          target.appendChild(card);
+          (node.children || []).forEach((child) => renderNode(child, depth + 1, target));
+        }
       }
       roots.forEach((root) => renderNode(root, 0));
     } catch (e) {

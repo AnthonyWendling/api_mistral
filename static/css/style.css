@@ -289,6 +289,45 @@ body {
   font-family: ui-monospace, monospace;
 }
 
+.collection-group {
+  margin-bottom: 0.25rem;
+}
+
+.collection-card--parent {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.collection-toggle {
+  flex-shrink: 0;
+  width: 1.25rem;
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 0.7rem;
+  user-select: none;
+}
+
+.collection-toggle:hover {
+  color: var(--primary);
+}
+
+.collection-card-body {
+  flex: 1;
+  min-width: 0;
+  cursor: pointer;
+}
+
+.collection-children {
+  margin-left: 0.75rem;
+  border-left: 1px solid var(--border);
+  padding-left: 0.5rem;
+}
+
+.collection-children.collapsed {
+  display: none;
+}
+
 .left-footer {
   margin-top: 1rem;
   padding-top: 1rem;
