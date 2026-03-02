@@ -48,6 +48,7 @@
       <div id="collections-loading" class="loading">Chargement…</div>
       <div id="collections-error" class="error" hidden></div>
       <div class="left-footer">
+        <button type="button" id="btn-ranger" class="btn btn-text">Ranger un document</button>
         <button type="button" id="btn-sources" class="btn btn-text">Connexions API (NocoDB…)</button>
       </div>
     </aside>
@@ -138,6 +139,30 @@
         <div id="search-results" class="search-results" hidden></div>
         <div id="search-loading" class="loading" hidden>Recherche…</div>
       </div>
+    </section>
+
+    <section id="section-ranger" class="panel right-panel" hidden>
+      <div class="panel-header">
+        <h2>Ranger un document</h2>
+        <button type="button" id="btn-ranger-back" class="btn btn-text">← Collections</button>
+      </div>
+      <p class="hint">Envoie un document : l’IA (Mistral) l’analyse (OCR/extraction + classification), extrait le numéro d’affaire et l’indexe dans les bonnes collections.</p>
+      <form id="form-ranger" class="upload-zone upload-form-grid">
+        <div class="upload-row upload-row-file">
+          <input type="file" id="input-ranger-file" name="file" accept=".pdf,.docx,.doc,.txt,.xlsx,.xls,.pptx,.ppt,.png,.jpg,.jpeg" />
+          <label for="input-ranger-file" class="upload-label">
+            <span id="ranger-placeholder">Choisir un fichier</span>
+          </label>
+        </div>
+        <div class="upload-row upload-row-url">
+          <label for="input-ranger-url" class="upload-url-label">Ou lien (URL)</label>
+          <input type="url" id="input-ranger-url" class="input-inline input-url" placeholder="https://…" />
+        </div>
+        <button type="submit" id="btn-ranger-submit" class="btn btn-primary">Analyser et ranger</button>
+      </form>
+      <div id="ranger-loading" class="loading" hidden>Analyse et indexation en cours…</div>
+      <div id="ranger-result" class="ranger-result" hidden></div>
+      <div id="ranger-message" class="message" hidden></div>
     </section>
 
     <section id="section-sources" class="panel right-panel" hidden>

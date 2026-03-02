@@ -91,6 +91,10 @@ Toutes les options sont pilotées par des **variables d’environnement** (ou un
 | `ALLOWED_ORIGINS` | Non | Origines CORS (séparées par des virgules, ou `*`) | `*` |
 | `CHUNK_SIZE` | Non | Nombre de caractères par chunk pour l’indexation | `512` |
 | `CHUNK_OVERLAP` | Non | Chevauchement entre deux chunks (caractères) | `128` |
+| `INTERFACE_CODE` | Non | Code de connexion à l’interface web (si vide, auth interface désactivée) | — |
+| `INTERFACE_PASSWORD` | Non | Mot de passe de l’interface web | — |
+| `INTERFACE_SECRET_KEY` | Non | Secret pour signer le cookie de session | `change-me-in-production` |
+| `API_KEY` | Non | Clé pour l’accès API (n8n, scripts) : en-tête `Authorization: Bearer` ou `X-API-Key` | — |
 
 Exemple de `.env` :
 
@@ -108,7 +112,7 @@ ALLOWED_ORIGINS=*
 - **En local** : `http://localhost:8000`
 - **Sur Railway** : `https://votre-projet.up.railway.app`
 
-Tous les endpoints sont décrits sous cette **base URL**. L’API ne nécessite pas d’authentification côté serveur (vous pouvez ajouter une clé API ou un JWT devant l’API avec un reverse proxy si besoin).
+Tous les endpoints sont décrits sous cette **base URL**. Si `INTERFACE_CODE`/`INTERFACE_PASSWORD` ou `API_KEY` sont définis, les routes `/vectors`, `/analyze`, `/audio`, `/webhooks` exigent une authentification (cookie ou clé API). Voir [Authentification depuis n8n](#authentification-depuis-n8n).
 
 **Content-Type :**
 
@@ -287,6 +291,42 @@ Si aucun texte n’est extrait :
 
 - **400** : Aucun fichier ni `file_url`, type non supporté, ou fichier trop volumineux.
 - **404** : Collection inexistante.
+
+---
+
+### 5.5b Ranger un document (analyse + classification + indexation)
+
+**POST /vectors/ranger-document**
+
+Analyse le document (extraction du texte / OCR), le classe avec Mistral selon la taxonomie (famille de contrainte, univers, secteur, domaine, lots), **extrait le numéro d’affaire** puis indexe le document dans les collections suggérées par l’IA et dans la collection de l’affaire (ex. `affaire-8888-24-0001`). Idéal pour « ranger » un document dans les bonnes collections sans choisir à la main.
+
+**Corps :** `multipart/form-data`
+
+| Champ | Type | Obligatoire | Description |
+|-------|------|-------------|-------------|
+| `file` | Fichier | Oui* | Fichier à analyser et indexer. |
+| `file_url` | Chaîne | Oui* | URL du document à télécharger. |
+
+\* Il faut **soit** `file`, **soit** `file_url`.
+
+**Réponse (200)**  
+```json
+{
+  "numero_affaire": "8888-24-0001",
+  "classification": {
+    "famille_contraintes": ["Contrainte d'hygiène"],
+    "univers": ["Milieu industriel"],
+    "secteur_activite": "Agroalimentaire",
+    "domaine_application": [],
+    "lots": []
+  },
+  "collection_ids": ["contrainte-hygiene", "univers-milieu-industriel", "secteur-agroalimentaire", "affaire-8888-24-0001"],
+  "indexed_in": { "contrainte-hygiene": 5, "univers-milieu-industriel": 5, "affaire-8888-24-0001": 5 },
+  "document_id": "abc123..."
+}
+```
+
+Si aucun texte n’est extrait : `numero_affaire`, `collection_ids` et `indexed_in` sont vides, avec un `message` explicatif.
 
 ---
 
@@ -685,6 +725,34 @@ Sur Linux/macOS, remplacer `^` par `\` en fin de ligne.
 
 ## 8. Utilisation avec n8n
 
+### Authentification depuis n8n
+
+Si l’API est protégée (`INTERFACE_CODE`/`INTERFACE_PASSWORD` ou `API_KEY` définis), chaque requête n8n vers `/vectors`, `/analyze`, `/audio` ou `/webhooks` doit être authentifiée.
+
+**Méthode recommandée : clé API (en-tête)**
+
+1. **Sur l’API** : définir la variable d’environnement `API_KEY` (ex. une chaîne secrète longue). Exemple dans `.env` ou sur Railway :  
+   `API_KEY=ma-cle-secrete-n8n-123`
+2. **Dans n8n** : pour chaque nœud **HTTP Request** qui appelle l’API, ajouter un en-tête :
+   - **Name** : `Authorization`  
+   - **Value** : `Bearer ma-cle-secrete-n8n-123`  
+   Ou bien :
+   - **Name** : `X-API-Key`  
+   - **Value** : `ma-cle-secrete-n8n-123`
+
+Dans l’éditeur du nœud HTTP Request :
+- Onglet **Headers** (ou **Authentication** selon la version) : ajouter un header.
+- Si vous stockez la clé dans les **Credentials** n8n (type “Header Auth”) : créer une credential avec header name `Authorization` et value `Bearer {{ $env.API_KEY }}` (ou mettre la clé en clair dans la credential).
+
+**Résumé**
+
+| Où | Quoi faire |
+|----|------------|
+| API (env) | `API_KEY= votre_cle_secrete` |
+| n8n – HTTP Request | Header `Authorization` = `Bearer votre_cle_secrete` **ou** header `X-API-Key` = `votre_cle_secrete` |
+
+Sans ce header (ou avec une clé incorrecte), les requêtes vers les routes protégées recevront **401 Unauthorized**.
+
 ### Principe
 
 - n8n se connecte à **SharePoint / OneDrive** (nœuds Microsoft).
@@ -757,6 +825,14 @@ En cas d’erreur, le body de la réponse contient souvent un message explicite 
 - **RAG** : indexer d’abord les documents avec `/index` ou `add_to_collection_id`, puis interroger avec `/search` et envoyer les chunks les plus pertinents à un agent (Mistral, OpenAI, etc.) avec la question de l’utilisateur.
 - **Railway** : monter un volume sur un chemin fixe (ex. `/data`) et définir `CHROMA_DATA_PATH=/data/chroma` pour que les collections survivent aux redéploiements.
 - **CORS** : en production, restreindre `ALLOWED_ORIGINS` aux domaines de vos front ou à l’URL de n8n si nécessaire.
+
+### Persistance des données (push / déploiement)
+
+**Est-ce que les données sont gardées quand je push ?**
+
+- **En local** : oui. Les collections Chroma et le fichier `data/sources.json` sont dans le dossier du projet (ou dans `CHROMA_DATA_PATH`). Tant que vous ne supprimez pas `data/`, les données restent.
+- **Sur Railway (ou tout hébergeur avec filesystem éphémère)** : **non**, par défaut. Chaque déploiement (push, redéploiement) repart d’un nouveau conteneur : le disque est réinitialisé, donc Chroma et les sources sont perdus.
+- **Pour garder les données sur Railway** : il faut **monter un volume persistant** sur un répertoire (ex. `/data`) et définir la variable d’environnement `CHROMA_DATA_PATH=/data/chroma`. Les données Chroma et, si vous y stockez aussi `sources.json`, les connexions API seront alors conservées après chaque push.
 
 ---
 

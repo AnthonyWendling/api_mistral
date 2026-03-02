@@ -37,9 +37,11 @@
     const form = $("#section-create");
     const detail = $("#section-detail");
     const sources = $("#section-sources");
+    const ranger = $("#section-ranger");
     if (form) form.hidden = panel !== "create";
     if (detail) detail.hidden = panel !== "detail";
     if (sources) sources.hidden = panel !== "sources";
+    if (ranger) ranger.hidden = panel !== "ranger";
     if (panel === "sources") loadSourcesList();
   }
 
@@ -324,6 +326,90 @@
   if (btnSources) btnSources.addEventListener("click", () => showRightPanel("sources"));
   const btnSourcesBack = $("#btn-sources-back");
   if (btnSourcesBack) btnSourcesBack.addEventListener("click", () => showRightPanel("create"));
+
+  const btnRanger = $("#btn-ranger");
+  if (btnRanger) btnRanger.addEventListener("click", () => showRightPanel("ranger"));
+  const btnRangerBack = $("#btn-ranger-back");
+  if (btnRangerBack) btnRangerBack.addEventListener("click", () => showRightPanel("create"));
+
+  const formRanger = $("#form-ranger");
+  if (formRanger) {
+    formRanger.addEventListener("submit", async (ev) => {
+      ev.preventDefault();
+      const fileInput = $("#input-ranger-file");
+      const urlInput = $("#input-ranger-url");
+      const file = fileInput && fileInput.files && fileInput.files[0];
+      const fileUrl = urlInput && urlInput.value ? urlInput.value.trim() : "";
+      if (!file && !fileUrl) {
+        showMessage("#ranger-message", "Choisissez un fichier ou saisissez une URL.", "error");
+        return;
+      }
+      const loading = $("#ranger-loading");
+      const resultEl = $("#ranger-result");
+      const msgEl = $("#ranger-message");
+      hideMessage("#ranger-message");
+      resultEl.hidden = true;
+      if (loading) loading.hidden = false;
+      try {
+        const formData = new FormData();
+        if (file) formData.append("file", file);
+        if (fileUrl) formData.append("file_url", fileUrl);
+        const res = await fetch(API_BASE + "/ranger-document", {
+          method: "POST",
+          credentials: "include",
+          body: formData,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) {
+          throw new Error(data.detail || data.message || res.statusText);
+        }
+        if (data.message && !data.indexed_in) {
+          resultEl.innerHTML = "<p class=\"message\">" + escapeHtml(data.message) + "</p>";
+        } else {
+          let html = "";
+          if (data.numero_affaire) {
+            html += "<p><strong>Numéro d'affaire :</strong> " + escapeHtml(data.numero_affaire) + "</p>";
+          } else {
+            html += "<p><em>Aucun numéro d'affaire détecté.</em></p>";
+          }
+          if (data.classification && Object.keys(data.classification).length) {
+            html += "<p><strong>Classification :</strong></p><ul>";
+            const c = data.classification;
+            if (c.famille_contraintes && c.famille_contraintes.length) html += "<li>Familles : " + escapeHtml(c.famille_contraintes.join(", ")) + "</li>";
+            if (c.univers && c.univers.length) html += "<li>Univers : " + escapeHtml(c.univers.join(", ")) + "</li>";
+            if (c.secteur_activite) html += "<li>Secteur : " + escapeHtml(c.secteur_activite) + "</li>";
+            if (c.domaine_application && c.domaine_application.length) html += "<li>Domaines : " + escapeHtml(c.domaine_application.join(", ")) + "</li>";
+            if (c.lots && c.lots.length) html += "<li>Lots : " + escapeHtml(c.lots.join(", ")) + "</li>";
+            html += "</ul>";
+          }
+          html += "<p><strong>Collections :</strong> " + escapeHtml((data.collection_ids || []).join(", ") || "—") + "</p>";
+          if (data.indexed_in && Object.keys(data.indexed_in).length) {
+            html += "<p><strong>Indexation :</strong></p><ul>";
+            for (const [cid, n] of Object.entries(data.indexed_in)) {
+              let val = typeof n === "number" ? n + " chunk(s)" : (n && n.error ? escapeHtml(n.error) : escapeHtml(String(n)));
+              html += "<li>" + escapeHtml(cid) + " : " + val + "</li>";
+            }
+            html += "</ul>";
+          }
+          resultEl.innerHTML = html;
+        }
+        resultEl.hidden = false;
+        if (data.indexed_in && Object.keys(data.indexed_in).length) showToast("Document rangé et indexé.");
+      } catch (e) {
+        showMessage("#ranger-message", e.message || "Erreur", "error");
+      } finally {
+        if (loading) loading.hidden = true;
+      }
+    });
+  }
+
+  const inputRangerFile = $("#input-ranger-file");
+  if (inputRangerFile) {
+    inputRangerFile.addEventListener("change", () => {
+      const ph = $("#ranger-placeholder");
+      if (ph) ph.textContent = inputRangerFile.files && inputRangerFile.files[0] ? inputRangerFile.files[0].name : "Choisir un fichier";
+    });
+  }
 
   const formCreateSource = $("#form-create-source");
   if (formCreateSource) {

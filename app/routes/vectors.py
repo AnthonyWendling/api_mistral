@@ -1,3 +1,4 @@
+import hashlib
 from typing import Annotated
 
 import httpx
@@ -15,7 +16,11 @@ from app.services.vector_store_service import (
     list_documents,
     search as vector_search,
 )
-from app.services.document_classification import get_all_category_collection_specs
+from app.services.document_classification import (
+    classify_document,
+    extract_numero_affaire,
+    get_all_category_collection_specs,
+)
 from app.services.sources_service import (
     create_source,
     delete_source,
@@ -186,6 +191,89 @@ async def index_document(
         raise HTTPException(502, f"Erreur indexation (embedding ou base vectorielle): {err_msg}")
 
     return {"collection_id": collection_id, "indexed_chunks": indexed}
+
+
+@router.post("/ranger-document")
+async def ranger_document(
+    file: Annotated[UploadFile | None, File()] = None,
+    file_url: Annotated[str | None, Form()] = None,
+):
+    """
+    Analyse un document (Mistral OCR / extraction + classification), extrait le numéro d'affaire,
+    puis indexe le document dans les collections suggérées par l'IA et dans la collection de l'affaire.
+    Fournir soit un fichier (multipart), soit file_url (form).
+    """
+    if file and file.filename:
+        content = await file.read()
+        if len(content) > MAX_BYTES:
+            raise HTTPException(400, f"Fichier trop volumineux (max {settings.max_file_size_mb} Mo)")
+        filename = file.filename
+    elif file_url:
+        content, filename = await _get_file_from_url(file_url)
+    else:
+        raise HTTPException(400, "Fournir soit un fichier (multipart), soit file_url (form).")
+
+    try:
+        text = extract_text(content, filename=filename)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Erreur lors de l'extraction du texte: {str(e)}")
+
+    if not text or not text.strip():
+        return {
+            "numero_affaire": None,
+            "collection_ids": [],
+            "indexed_in": {},
+            "message": "Aucun texte extrait du document (OCR/extraction vide).",
+        }
+
+    classification = classify_document(text)
+    numero_affaire = extract_numero_affaire(text)
+    collection_ids = list(classification.get("collection_ids") or [])
+
+    affaire_collection_id = None
+    if numero_affaire:
+        affaire_collection_id = create_collection("Affaire " + numero_affaire)
+        if affaire_collection_id not in collection_ids:
+            collection_ids.append(affaire_collection_id)
+
+    for cid in collection_ids:
+        if cid != affaire_collection_id:
+            create_collection(cid)
+
+    doc_id = hashlib.sha256((filename + text[:5000]).encode()).hexdigest()[:32]
+    meta = {"numero_affaire": numero_affaire} if numero_affaire else {}
+
+    indexed_in = {}
+    for cid in collection_ids:
+        try:
+            n = add_documents(
+                cid,
+                [text],
+                document_id=doc_id,
+                source_file=filename,
+                file_url=file_url or "",
+                metadata_per_doc=meta if meta else None,
+                deduplicate=True,
+            )
+            indexed_in[cid] = n
+        except Exception as e:
+            indexed_in[cid] = {"error": str(e)}
+
+    return {
+        "numero_affaire": numero_affaire or None,
+        "classification": {
+            "famille_contraintes": classification.get("famille_contraintes"),
+            "univers": classification.get("univers"),
+            "secteur_activite": classification.get("secteur_activite"),
+            "domaine_application": classification.get("domaine_application"),
+            "lots": classification.get("lots"),
+        },
+        "collection_ids": collection_ids,
+        "indexed_in": indexed_in,
+        "document_id": doc_id,
+    }
 
 
 @router.delete("/collections/{collection_id}")

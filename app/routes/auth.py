@@ -17,7 +17,10 @@ COOKIE_MAX_AGE = 60 * 60 * 24 * 7  # 7 jours
 
 
 def _auth_enabled() -> bool:
-    return bool(settings.interface_code and settings.interface_password)
+    """Auth activée si code+password (cookie) et/ou api_key (n8n, scripts) sont configurés."""
+    return bool(
+        (settings.interface_code and settings.interface_password) or settings.api_key
+    )
 
 
 def _make_token() -> str:
@@ -33,6 +36,13 @@ def _token_valid(token: str) -> bool:
     if not token:
         return False
     return token == _make_token()
+
+
+def _api_key_valid(value: str) -> bool:
+    """Vérifie si la clé API (header) est valide. Pour n8n / accès programmatique."""
+    if not value or not settings.api_key:
+        return False
+    return value.strip() == settings.api_key
 
 
 class LoginRequest(BaseModel):

@@ -17,6 +17,8 @@ class Settings(BaseSettings):
     interface_code: str = "AnthonyWendlingAPIMistral"
     interface_password: str = "&RlHB17oXIUcr&"
     interface_secret_key: str = "change-me-in-production"
+    # Clé API pour accès programmatique (n8n, scripts) : en-tête Authorization: Bearer <api_key> ou X-API-Key
+    api_key: str = ""
 
 
 settings = Settings()

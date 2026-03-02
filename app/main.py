@@ -11,15 +11,30 @@ from starlette.requests import Request
 
 from app.config import settings
 from app.routes import analyze, transcription, vectors, webhooks
-from app.routes.auth import _auth_enabled, _token_valid, COOKIE_NAME
+from app.routes.auth import _api_key_valid, _auth_enabled, _token_valid, COOKIE_NAME
 
 STATIC_DIR = Path(__file__).resolve().parent.parent / "static"
 
 PROTECTED_PREFIXES = ("/vectors", "/analyze", "/audio", "/webhooks")
 
 
+def _is_authenticated(request: Request) -> bool:
+    """Accepte le cookie de session OU la clé API en en-tête (pour n8n)."""
+    token = request.cookies.get(COOKIE_NAME)
+    if _token_valid(token):
+        return True
+    auth_header = request.headers.get("Authorization")
+    if auth_header and auth_header.startswith("Bearer "):
+        if _api_key_valid(auth_header[7:]):
+            return True
+    api_key_header = request.headers.get("X-API-Key")
+    if api_key_header and _api_key_valid(api_key_header):
+        return True
+    return False
+
+
 class AuthMiddleware(BaseHTTPMiddleware):
-    """Vérifie le cookie de session pour les routes protégées si l'auth est activée."""
+    """Vérifie cookie ou clé API pour les routes protégées si l'auth est activée."""
 
     async def dispatch(self, request: Request, call_next):
         if not _auth_enabled():
@@ -27,8 +42,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
         path = request.scope.get("path", "")
         if not any(path.startswith(p) for p in PROTECTED_PREFIXES):
             return await call_next(request)
-        token = request.cookies.get(COOKIE_NAME)
-        if not _token_valid(token):
+        if not _is_authenticated(request):
             return JSONResponse(status_code=401, content={"detail": "Non authentifié"})
         return await call_next(request)
 

@@ -274,3 +274,28 @@ def _ensure_list(x: Any) -> list:
     if isinstance(x, list):
         return list(x)
     return [x]
+
+
+def extract_numero_affaire(text: str) -> str:
+    """
+    Utilise Mistral pour extraire le numéro d'affaire ou l'identifiant d'affaire du document.
+    Retourne la chaîne extraite ou une chaîne vide si non trouvé.
+    """
+    if not text or not text.strip():
+        return ""
+    text = text.strip()[:MAX_TEXT_LENGTH]
+    client = get_client()
+    system = """Tu extrais uniquement le numéro d'affaire ou l'identifiant d'affaire mentionné dans le document (ex: 8888-24-0001, Affaire 123, n° affaire XXX).
+Réponds par ce numéro ou identifiant seul, sans phrase. Si aucun numéro d'affaire n'est trouvé, réponds exactement: AUCUN"""
+    user = f"Document:\n\n{text}\n\n---\nNuméro d'affaire (ou AUCUN):"
+    response = client.chat.complete(
+        model="open-mistral-7b",
+        messages=[
+            {"role": "system", "content": system},
+            {"role": "user", "content": user},
+        ],
+    )
+    raw = (response.choices[0].message.content or "").strip()
+    if not raw or raw.upper() == "AUCUN":
+        return ""
+    return raw.strip()
