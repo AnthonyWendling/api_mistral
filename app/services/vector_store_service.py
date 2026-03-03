@@ -193,6 +193,46 @@ def list_documents(collection_id: str, limit_chunks: int = 2000) -> list[dict]:
     return docs
 
 
+def search_all_collections(query: str, top_k: int = 10) -> list[dict]:
+    """
+    Recherche vectorielle dans toutes les collections, fusionne et trie par pertinence.
+    Utilisé par le chat quand aucune collection n'est précisée.
+    """
+    collections = list_collections()
+    if not collections:
+        return []
+    all_results: list[tuple[float, dict]] = []
+    per_coll = max(top_k, 5)
+    for c in collections:
+        cid = c["id"]
+        try:
+            coll = get_collection(cid)
+            q_embed = embed_query(query)
+            result = coll.query(
+                query_embeddings=[q_embed],
+                n_results=per_coll,
+                include=["documents", "metadatas", "distances"],
+            )
+            if result["ids"] and result["ids"][0]:
+                for i, id_ in enumerate(result["ids"][0]):
+                    dist = result["distances"][0][i] if result.get("distances") and result["distances"][0] else None
+                    meta = (result["metadatas"][0][i] or {}) if result["metadatas"] else {}
+                    meta["_collection_id"] = cid
+                    all_results.append((
+                        dist if dist is not None else float("inf"),
+                        {
+                            "chunk_id": id_,
+                            "text": result["documents"][0][i] if result["documents"] else "",
+                            "metadata": meta,
+                            "distance": dist,
+                        },
+                    ))
+        except Exception:
+            continue
+    all_results.sort(key=lambda x: x[0])
+    return [r[1] for r in all_results[:top_k]]
+
+
 def search(
     collection_id: str,
     query: str,

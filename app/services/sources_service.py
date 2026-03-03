@@ -183,7 +183,7 @@ async def sync_nocodb_source(source_id: str) -> dict:
     except httpx.HTTPStatusError as e:
         return {"ok": False, "error": f"NocoDB API: {e.response.status_code}", "indexed": 0}
     except Exception as e:
-        return {"ok": False, "error": str(e), "indexed": 0}
+        return {"ok": False, "error": str(e) or "Erreur inconnue (NocoDB)", "indexed": 0}
 
     list_key = "list" if "list" in data else "records"
     records = data.get(list_key, data) if isinstance(data, dict) else []
@@ -400,7 +400,7 @@ async def sync_sharepoint_source(source_id: str) -> dict:
     except httpx.HTTPStatusError as e:
         return {"ok": False, "error": f"Graph auth: {e.response.status_code}", "indexed": 0}
     except Exception as e:
-        return {"ok": False, "error": str(e), "indexed": 0}
+        return {"ok": False, "error": str(e) or "Erreur inconnue (Graph auth)", "indexed": 0}
 
     hostname, server_path = _parse_site_url(site_url)
     if not hostname:

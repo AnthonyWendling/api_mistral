@@ -38,7 +38,7 @@ class SearchResult(BaseModel):
 
 class RAGRequest(BaseModel):
     query: str = Field(..., min_length=1)
-    collection_id: str = Field(..., min_length=1)
+    collection_id: str | None = Field(None, description="Si vide ou absent, recherche dans toutes les collections")
     top_k: int = Field(5, ge=1, le=20)
     system_prompt: str | None = None
     include_subcollections: bool = Field(False, description="Inclure les sous-collections (recherche IA / Mistral)")

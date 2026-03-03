@@ -45,7 +45,6 @@
     if (ranger) ranger.hidden = panel !== "ranger";
     if (chat) chat.hidden = panel !== "chat";
     if (panel === "sources") loadSourcesList();
-    if (panel === "chat") loadChatCollections();
   }
 
   function showToast(message, isError = false) {
@@ -166,24 +165,6 @@
       opt.textContent = c.name + " (" + c.id + ")";
       sel.appendChild(opt);
     });
-  }
-
-  async function loadChatCollections() {
-    const sel = $("#chat-collection");
-    if (!sel) return;
-    try {
-      const data = await api("GET", "/collections");
-      const list = data.collections || [];
-      sel.innerHTML = "<option value=\"\">— Choisir une collection —</option>";
-      list.forEach((c) => {
-        const opt = document.createElement("option");
-        opt.value = c.id;
-        opt.textContent = (c.name || c.id) + " (" + c.id + ")";
-        sel.appendChild(opt);
-      });
-    } catch (e) {
-      showToast(e.message || "Erreur chargement collections", true);
-    }
   }
 
   async function loadSourcesList() {
@@ -802,15 +783,12 @@
 
   $("#form-chat").addEventListener("submit", async (ev) => {
     ev.preventDefault();
-    const sel = $("#chat-collection");
     const input = $("#chat-input");
     const query = input && input.value.trim();
-    const collectionId = sel && sel.value;
-    if (!query || !collectionId) {
-      showToast("Choisissez une collection et saisissez une question.", true);
+    if (!query) {
+      showToast("Saisissez une question.", true);
       return;
     }
-    const includeSub = $("#chat-include-sub") && $("#chat-include-sub").checked;
     const messagesEl = $("#chat-messages");
     const loadingEl = $("#chat-loading");
     const userMsg = document.createElement("div");
@@ -826,9 +804,7 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           query,
-          collection_id: collectionId,
           top_k: 10,
-          include_subcollections: includeSub,
         }),
       });
       const data = await res.json().catch(() => ({}));
@@ -842,12 +818,14 @@
         if (data.sources && data.sources.length > 0) {
           html += "<div class=\"chat-sources\"><strong>Sources (" + data.sources.length + ")</strong><ul>";
           data.sources.forEach((r) => {
-            const ref = (r.metadata && (r.metadata.source_file || r.metadata.document_id)) ? escapeHtml(String(r.metadata.source_file || r.metadata.document_id)) : "Passage";
+            const meta = r.metadata || {};
+            const ref = (meta.source_file || meta.document_id) ? escapeHtml(String(meta.source_file || meta.document_id)) : "Passage";
+            const coll = meta._collection_id ? " <span class=\"chat-source-collection\">(" + escapeHtml(meta._collection_id) + ")</span>" : "";
             let link = "";
-            if (r.metadata && r.metadata.sharepoint_web_url) {
-              link = " <a href=\"" + escapeHtml(r.metadata.sharepoint_web_url) + "\" target=\"_blank\" rel=\"noopener\">Ouvrir</a>";
+            if (meta.sharepoint_web_url) {
+              link = " <a href=\"" + escapeHtml(meta.sharepoint_web_url) + "\" target=\"_blank\" rel=\"noopener\">Ouvrir</a>";
             }
-            html += "<li>" + ref + link + "</li>";
+            html += "<li>" + ref + coll + link + "</li>";
           });
           html += "</ul></div>";
         }

@@ -783,6 +783,10 @@ body {
   margin: 0.35rem 0 0 1rem;
   padding: 0;
 }
+.chat-source-collection {
+  font-size: 0.85em;
+  color: var(--text-muted);
+}
 .chat-form {
   display: flex;
   gap: 0.5rem;

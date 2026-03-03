@@ -162,23 +162,13 @@
         <h2>Chat – Questions sur vos documents</h2>
         <button type="button" id="btn-chat-back" class="btn btn-text">← Collections</button>
       </div>
-      <p class="hint">Choisissez une collection, posez une question : l’IA cherche les passages pertinents et vous répond avec les sources.</p>
-      <div class="chat-toolbar">
-        <label for="chat-collection">Collection</label>
-        <select id="chat-collection" class="input-select">
-          <option value="">— Choisir une collection —</option>
-        </select>
-        <label class="checkbox-label">
-          <input type="checkbox" id="chat-include-sub" />
-          Inclure sous-collections
-        </label>
-      </div>
+      <p class="hint">Posez une question : l'IA cherche automatiquement dans toutes vos collections les passages pertinents et vous répond avec les sources.</p>
       <div id="chat-messages" class="chat-messages"></div>
       <form id="form-chat" class="chat-form">
         <input type="text" id="chat-input" class="chat-input" placeholder="Posez votre question…" autocomplete="off" />
         <button type="submit" id="btn-chat-send" class="btn btn-primary">Envoyer</button>
       </form>
-      <div id="chat-loading" class="loading" hidden>Recherche et réponse en cours…</div>
+      <div id="chat-loading" class="loading" hidden>Recherche dans toutes les collections et réponse en cours…</div>
     </section>
 
     <section id="section-ranger" class="panel right-panel" hidden>

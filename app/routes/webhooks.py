@@ -161,21 +161,31 @@ async def suggest_collections_webhook(request: Request):
 @router.post("/rag", response_model=RAGResponse)
 def rag_webhook(payload: RAGRequest):
     """
-    Webhook RAG : envoie une question + collection_id → recherche vectorielle
-    → contexte envoyé à Mistral → réponse fiable basée sur tes documents.
+    Webhook RAG : envoie une question (+ optionnellement collection_id).
+    Si collection_id absent ou vide : recherche dans toutes les collections.
+    Sinon : recherche dans la collection indiquée (et sous-collections si demandé).
     """
-    try:
-        results = vector_search(
-            payload.collection_id,
-            payload.query,
-            top_k=payload.top_k,
-            include_subcollections=payload.include_subcollections,
-        )
-    except Exception as e:
-        err = str(e)
-        if "does not exist" in err.lower() or "not found" in err.lower():
-            raise HTTPException(404, f"Collection non trouvée: {payload.collection_id}")
-        raise HTTPException(502, f"Erreur recherche vectorielle: {err}")
+    from app.services.vector_store_service import search_all_collections
+
+    collection_id = (payload.collection_id or "").strip()
+    if not collection_id:
+        try:
+            results = search_all_collections(payload.query, top_k=payload.top_k)
+        except Exception as e:
+            raise HTTPException(502, f"Erreur recherche vectorielle: {str(e)}")
+    else:
+        try:
+            results = vector_search(
+                collection_id,
+                payload.query,
+                top_k=payload.top_k,
+                include_subcollections=payload.include_subcollections,
+            )
+        except Exception as e:
+            err = str(e)
+            if "does not exist" in err.lower() or "not found" in err.lower():
+                raise HTTPException(404, f"Collection non trouvée: {collection_id}")
+            raise HTTPException(502, f"Erreur recherche vectorielle: {err}")
 
     if not results:
         return RAGResponse(

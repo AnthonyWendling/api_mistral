@@ -390,22 +390,36 @@ async def sync_source_route(source_id: str):
     Lance la synchronisation : récupère les enregistrements de la source (NocoDB, SharePoint, etc.)
     et indexe chaque document dans le store vectoriel.
     """
+    import logging
+    from fastapi.responses import JSONResponse
+
     source = get_source(source_id)
     if not source:
         raise HTTPException(404, "Source non trouvée")
     src_type = source.get("type", "nocodb")
-    if src_type == "sharepoint":
-        result = await sync_sharepoint_source(source_id)
-    else:
-        result = await sync_nocodb_source(source_id)
-    if not result.get("ok") and "error" in result:
-        from fastapi.responses import JSONResponse
+    try:
+        if src_type == "sharepoint":
+            result = await sync_sharepoint_source(source_id)
+        else:
+            result = await sync_nocodb_source(source_id)
+    except Exception as e:
+        logging.exception("Sync source %s failed", source_id)
         return JSONResponse(
             status_code=502,
             content={
-                "detail": result["error"],
+                "detail": str(e) or "Erreur inconnue lors de la synchronisation",
+                "indexed": 0,
+                "errors": [str(e)] if str(e) else [],
+            },
+        )
+    if not result.get("ok") and "error" in result:
+        detail = (result.get("error") or "").strip() or "Erreur inconnue lors de la synchronisation"
+        return JSONResponse(
+            status_code=502,
+            content={
+                "detail": detail,
                 "indexed": result.get("indexed", 0),
-                "errors": result.get("errors", []),
+                "errors": result.get("errors", []) or ([detail] if detail else []),
             },
         )
     return result
