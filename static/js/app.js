@@ -38,11 +38,14 @@
     const detail = $("#section-detail");
     const sources = $("#section-sources");
     const ranger = $("#section-ranger");
+    const chat = $("#section-chat");
     if (form) form.hidden = panel !== "create";
     if (detail) detail.hidden = panel !== "detail";
     if (sources) sources.hidden = panel !== "sources";
     if (ranger) ranger.hidden = panel !== "ranger";
+    if (chat) chat.hidden = panel !== "chat";
     if (panel === "sources") loadSourcesList();
+    if (panel === "chat") loadChatCollections();
   }
 
   function showToast(message, isError = false) {
@@ -163,6 +166,24 @@
       opt.textContent = c.name + " (" + c.id + ")";
       sel.appendChild(opt);
     });
+  }
+
+  async function loadChatCollections() {
+    const sel = $("#chat-collection");
+    if (!sel) return;
+    try {
+      const data = await api("GET", "/collections");
+      const list = data.collections || [];
+      sel.innerHTML = "<option value=\"\">— Choisir une collection —</option>";
+      list.forEach((c) => {
+        const opt = document.createElement("option");
+        opt.value = c.id;
+        opt.textContent = (c.name || c.id) + " (" + c.id + ")";
+        sel.appendChild(opt);
+      });
+    } catch (e) {
+      showToast(e.message || "Erreur chargement collections", true);
+    }
   }
 
   async function loadSourcesList() {
@@ -335,6 +356,11 @@
   if (btnSources) btnSources.addEventListener("click", () => showRightPanel("sources"));
   const btnSourcesBack = $("#btn-sources-back");
   if (btnSourcesBack) btnSourcesBack.addEventListener("click", () => showRightPanel("create"));
+
+  const btnChat = $("#btn-chat");
+  if (btnChat) btnChat.addEventListener("click", () => showRightPanel("chat"));
+  const btnChatBack = $("#btn-chat-back");
+  if (btnChatBack) btnChatBack.addEventListener("click", () => showRightPanel("create"));
 
   const btnRanger = $("#btn-ranger");
   if (btnRanger) btnRanger.addEventListener("click", () => showRightPanel("ranger"));
@@ -722,6 +748,120 @@
     } catch (e) {
       loadingEl.hidden = true;
       showToast(e.message || "Erreur recherche", true);
+    }
+  });
+
+  $("#form-rag").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const query = $("#input-rag-question").value.trim();
+    if (!query || !currentCollectionId) return;
+    const loadingEl = $("#rag-loading");
+    const areaEl = $("#rag-answer-area");
+    const includeSub = $("#input-rag-include-sub") && $("#input-rag-include-sub").checked;
+    areaEl.hidden = true;
+    areaEl.innerHTML = "";
+    loadingEl.hidden = false;
+    try {
+      const res = await fetch("/webhooks/rag", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          collection_id: currentCollectionId,
+          top_k: 10,
+          include_subcollections: includeSub,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      loadingEl.hidden = true;
+      if (!res.ok) {
+        throw new Error(data.detail || data.message || res.statusText);
+      }
+      let html = "<div class=\"rag-answer-text\">" + escapeHtml(data.answer || "") + "</div>";
+      if (data.sources && data.sources.length > 0) {
+        html += "<div class=\"rag-sources-title\">Sources (" + data.sources.length + ")</div>";
+        data.sources.forEach((r) => {
+          const metaParts = [];
+          if (r.metadata) {
+            if (r.metadata.source_file) metaParts.push(escapeHtml(r.metadata.source_file));
+            if (r.metadata.sharepoint_web_url) metaParts.push("<a href=\"" + escapeHtml(r.metadata.sharepoint_web_url) + "\" target=\"_blank\" rel=\"noopener\">Ouvrir dans SharePoint</a>");
+          }
+          const metaStr = metaParts.length ? "<div class=\"meta\">" + metaParts.join(" — ") + "</div>" : "";
+          html += "<div class=\"search-result-item\"><div class=\"text\">" + escapeHtml(r.text) + "</div>" + metaStr + "</div>";
+        });
+      }
+      areaEl.innerHTML = html;
+      areaEl.hidden = false;
+    } catch (e) {
+      loadingEl.hidden = true;
+      areaEl.innerHTML = "<p class=\"message error\">" + escapeHtml(e.message || "Erreur RAG") + "</p>";
+      areaEl.hidden = false;
+    }
+  });
+
+  $("#form-chat").addEventListener("submit", async (ev) => {
+    ev.preventDefault();
+    const sel = $("#chat-collection");
+    const input = $("#chat-input");
+    const query = input && input.value.trim();
+    const collectionId = sel && sel.value;
+    if (!query || !collectionId) {
+      showToast("Choisissez une collection et saisissez une question.", true);
+      return;
+    }
+    const includeSub = $("#chat-include-sub") && $("#chat-include-sub").checked;
+    const messagesEl = $("#chat-messages");
+    const loadingEl = $("#chat-loading");
+    const userMsg = document.createElement("div");
+    userMsg.className = "chat-message user";
+    userMsg.textContent = query;
+    messagesEl.appendChild(userMsg);
+    input.value = "";
+    loadingEl.hidden = false;
+    try {
+      const res = await fetch("/webhooks/rag", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query,
+          collection_id: collectionId,
+          top_k: 10,
+          include_subcollections: includeSub,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      loadingEl.hidden = true;
+      const assistantMsg = document.createElement("div");
+      assistantMsg.className = "chat-message assistant";
+      if (!res.ok) {
+        assistantMsg.innerHTML = "<span class=\"chat-answer-text\">" + escapeHtml(data.detail || data.message || res.statusText || "Erreur") + "</span>";
+      } else {
+        let html = "<div class=\"chat-answer-text\">" + escapeHtml(data.answer || "Aucune réponse.") + "</div>";
+        if (data.sources && data.sources.length > 0) {
+          html += "<div class=\"chat-sources\"><strong>Sources (" + data.sources.length + ")</strong><ul>";
+          data.sources.forEach((r) => {
+            const ref = (r.metadata && (r.metadata.source_file || r.metadata.document_id)) ? escapeHtml(String(r.metadata.source_file || r.metadata.document_id)) : "Passage";
+            let link = "";
+            if (r.metadata && r.metadata.sharepoint_web_url) {
+              link = " <a href=\"" + escapeHtml(r.metadata.sharepoint_web_url) + "\" target=\"_blank\" rel=\"noopener\">Ouvrir</a>";
+            }
+            html += "<li>" + ref + link + "</li>";
+          });
+          html += "</ul></div>";
+        }
+        assistantMsg.innerHTML = html;
+      }
+      messagesEl.appendChild(assistantMsg);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
+    } catch (e) {
+      loadingEl.hidden = true;
+      const errMsg = document.createElement("div");
+      errMsg.className = "chat-message assistant";
+      errMsg.innerHTML = "<span class=\"chat-answer-text\">" + escapeHtml(e.message || "Erreur") + "</span>";
+      messagesEl.appendChild(errMsg);
+      messagesEl.scrollTop = messagesEl.scrollHeight;
     }
   });
 

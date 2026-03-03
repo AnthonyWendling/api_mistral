@@ -48,6 +48,7 @@
       <div id="collections-loading" class="loading">Chargement…</div>
       <div id="collections-error" class="error" hidden></div>
       <div class="left-footer">
+        <button type="button" id="btn-chat" class="btn btn-text">Chat (questions RAG)</button>
         <button type="button" id="btn-ranger" class="btn btn-text">Ranger un document</button>
         <button type="button" id="btn-sources" class="btn btn-text">Connexions API (NocoDB…)</button>
       </div>
@@ -139,6 +140,45 @@
         <div id="search-results" class="search-results" hidden></div>
         <div id="search-loading" class="loading" hidden>Recherche…</div>
       </div>
+
+      <div class="subsection">
+        <h3>Question RAG (réponse IA)</h3>
+        <p class="hint">Posez une question : l’IA cherche dans cette collection et répond en s’appuyant sur les documents trouvés.</p>
+        <form id="form-rag" class="search-form">
+          <input type="text" id="input-rag-question" placeholder="Votre question…" required />
+          <label class="checkbox-label">
+            <input type="checkbox" id="input-rag-include-sub" />
+            Inclure les sous-collections
+          </label>
+          <button type="submit" id="btn-rag-ask" class="btn btn-primary">Poser la question RAG</button>
+        </form>
+        <div id="rag-loading" class="loading" hidden>Réponse en cours…</div>
+        <div id="rag-answer-area" class="rag-answer-area" hidden></div>
+      </div>
+    </section>
+
+    <section id="section-chat" class="panel right-panel" hidden>
+      <div class="panel-header">
+        <h2>Chat – Questions sur vos documents</h2>
+        <button type="button" id="btn-chat-back" class="btn btn-text">← Collections</button>
+      </div>
+      <p class="hint">Choisissez une collection, posez une question : l’IA cherche les passages pertinents et vous répond avec les sources.</p>
+      <div class="chat-toolbar">
+        <label for="chat-collection">Collection</label>
+        <select id="chat-collection" class="input-select">
+          <option value="">— Choisir une collection —</option>
+        </select>
+        <label class="checkbox-label">
+          <input type="checkbox" id="chat-include-sub" />
+          Inclure sous-collections
+        </label>
+      </div>
+      <div id="chat-messages" class="chat-messages"></div>
+      <form id="form-chat" class="chat-form">
+        <input type="text" id="chat-input" class="chat-input" placeholder="Posez votre question…" autocomplete="off" />
+        <button type="submit" id="btn-chat-send" class="btn btn-primary">Envoyer</button>
+      </form>
+      <div id="chat-loading" class="loading" hidden>Recherche et réponse en cours…</div>
     </section>
 
     <section id="section-ranger" class="panel right-panel" hidden>
