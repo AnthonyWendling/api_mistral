@@ -115,9 +115,36 @@ def _resolve_collection_id(template: str, record: dict) -> str:
     for key, value in record.items():
         if isinstance(value, (str, int, float)):
             result = result.replace("{{" + str(key) + "}}", str(value))
+        elif isinstance(value, dict) and "id" in value:
+            result = result.replace("{{" + str(key) + "}}", str(value["id"]))
     result = re.sub(r"\ \{\{[^}]+\}\}", "", result)
     result = _slug(result) or "default"
     return result
+
+
+def _get_row_flat(row: dict) -> dict:
+    """Retourne les champs plats : NocoDB peut renvoyer record.fields."""
+    return row.get("fields", row)
+
+
+def _extract_urls(value) -> list[str]:
+    """
+    Extrait les URLs depuis une valeur NocoDB : chaîne (une URL), ou liste de {url, title?}.
+    Ex. url_pdf (string), document_pdf (array), fichier (array).
+    """
+    if not value:
+        return []
+    if isinstance(value, str) and value.strip().startswith(("http://", "https://")):
+        return [value.strip()]
+    if isinstance(value, list):
+        out = []
+        for item in value:
+            if isinstance(item, dict) and item.get("url"):
+                out.append(str(item["url"]).strip())
+            elif isinstance(item, str) and item.strip().startswith(("http://", "https://")):
+                out.append(item.strip())
+        return out
+    return []
 
 
 async def sync_nocodb_source(source_id: str) -> dict:
@@ -138,6 +165,7 @@ async def sync_nocodb_source(source_id: str) -> dict:
     field_mapping = config.get("field_mapping") or {}
     limit = int(config.get("limit", 100))
     file_url_key = field_mapping.get("file_url") or "file_url"
+    attachment_keys = config.get("attachment_keys") or []
     if not base_url or not table_id:
         return {"ok": False, "error": "base_url et table_id requis", "indexed": 0}
 
@@ -169,11 +197,23 @@ async def sync_nocodb_source(source_id: str) -> dict:
     errors = []
     for rec in records:
         row = rec if isinstance(rec, dict) else getattr(rec, "__dict__", {})
-        file_url = row.get(file_url_key) or row.get("file_url") or row.get("Attachment") or row.get("attachment_url")
-        if not file_url:
+        row_flat = _get_row_flat(row)
+        urls = _extract_urls(row_flat.get(file_url_key))
+        if not urls and attachment_keys:
+            for key in attachment_keys:
+                urls.extend(_extract_urls(row_flat.get(key)))
+        if not urls:
+            urls = _extract_urls(row_flat.get("file_url")) or _extract_urls(row_flat.get("Attachment")) or _extract_urls(row_flat.get("attachment_url")) or _extract_urls(row_flat.get("url_pdf"))
+        if not urls:
             continue
+        affaire_val = row_flat.get("affaire_id")
+        if affaire_val is None and isinstance(row_flat.get("ouptimi_affaires"), dict):
+            affaire_val = row_flat["ouptimi_affaires"].get("id")
+        row_for_tpl = dict(row_flat)
+        if affaire_val is not None:
+            row_for_tpl["affaire_id"] = affaire_val
         try:
-            coll_id = _resolve_collection_id(collection_id_tpl, row)
+            coll_id = _resolve_collection_id(collection_id_tpl, row_for_tpl)
             existing = {c["id"] for c in list_collections()}
             if coll_id not in existing:
                 create_collection(coll_id)
@@ -181,20 +221,27 @@ async def sync_nocodb_source(source_id: str) -> dict:
             for our_key, nocodb_key in field_mapping.items():
                 if our_key in ("file_url",):
                     continue
-                val = row.get(nocodb_key)
+                val = row_flat.get(nocodb_key)
+                if val is None and nocodb_key == "ouptimi_affaires" and isinstance(row_flat.get("ouptimi_affaires"), dict):
+                    val = row_flat["ouptimi_affaires"].get("id")
                 if val is not None and our_key in (
                     "document_id", "nocodb_record_id", "nocodb_table_name", "nocodb_base_id",
                     "affaire_id", "numero_affaire", "folder_path",
                 ):
                     meta[our_key] = str(val)
-            doc_id = meta.get("document_id") or str(row.get("id", row.get("Id", "")))
-            try:
-                async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as c2:
-                    r2 = await c2.get(file_url)
-                    r2.raise_for_status()
-                    content = r2.content
-                    fn = (file_url or "").split("/")[-1] or "document"
-                    cd = r2.headers.get("content-disposition") or ""
+            if affaire_val is not None and "affaire_id" not in meta:
+                meta["affaire_id"] = str(affaire_val)
+            if row_flat.get("numero_complet") and "numero_affaire" not in meta:
+                meta["numero_affaire"] = str(row_flat["numero_complet"])
+            doc_id_base = meta.get("document_id") or str(row.get("id", row.get("Id", "")))
+            for file_url in urls:
+                try:
+                    async with httpx.AsyncClient(follow_redirects=True, timeout=60.0) as c2:
+                        r2 = await c2.get(file_url)
+                        r2.raise_for_status()
+                        content = r2.content
+                        fn = (file_url or "").split("/")[-1] or "document"
+                        cd = r2.headers.get("content-disposition") or ""
                     if "filename=" in cd:
                         m = re.search(r'filename\*?=(?:UTF-8\'?\')?["\']?([^"\';\s]+)', cd, re.I)
                         if not m:
@@ -203,26 +250,31 @@ async def sync_nocodb_source(source_id: str) -> dict:
                             fn = m.group(1).strip()
                     if not fn or fn == "download" or "." not in fn:
                         src_key = field_mapping.get("source_file") or field_mapping.get("filename")
-                        if src_key and row.get(src_key):
-                            fn = str(row.get(src_key)).strip()
-                    if not fn or "." not in fn:
-                        fn = fn or "document"
-                text = extract_text(content, filename=fn)
-            except Exception as e1:
-                errors.append(f"Record {doc_id}: {e1}")
-                continue
-            if not text:
-                continue
-            n = add_documents(
-                coll_id,
-                [text],
-                document_id=doc_id,
-                source_file=fn,
-                file_url=file_url,
-                metadata_per_doc=meta or None,
-                deduplicate=True,
-            )
-            indexed_total += n
+                        if src_key and row_flat.get(src_key):
+                            fn = str(row_flat.get(src_key)).strip()
+                        elif row_flat.get("filenamestring"):
+                            fn = str(row_flat.get("filenamestring")).strip()
+                        elif row_flat.get("filename"):
+                            fn = str(row_flat.get("filename")).strip()
+                        if not fn or "." not in fn:
+                            fn = fn or "document"
+                    text = extract_text(content, filename=fn)
+                except Exception as e1:
+                    errors.append(f"Record {doc_id_base} {fn}: {e1}")
+                    continue
+                if not text:
+                    continue
+                doc_id = f"{doc_id_base}_{fn}" if len(urls) > 1 else doc_id_base
+                n = add_documents(
+                    coll_id,
+                    [text],
+                    document_id=doc_id,
+                    source_file=fn,
+                    file_url=file_url,
+                    metadata_per_doc=meta or None,
+                    deduplicate=True,
+                )
+                indexed_total += n
         except Exception as e2:
             errors.append(str(e2))
 
@@ -293,7 +345,7 @@ async def _list_files_in_folder(
     if len(collected) >= limit:
         return
     path = f"/sites/{site_id}/drive/root:/{folder_path}:/children" if folder_path else f"/sites/{site_id}/drive/root/children"
-    params = {"$select": "id,name,file,folder,parentReference,@microsoft.graph.downloadUrl"}
+    params = {"$select": "id,name,file,folder,parentReference,@microsoft.graph.downloadUrl,webUrl"}
     try:
         data = await _graph_get(token, path, params)
         items = data.get("value", [])
@@ -315,6 +367,7 @@ async def _list_files_in_folder(
                         "id": item.get("id"),
                         "name": name,
                         "download_url": download_url,
+                        "web_url": item.get("webUrl", ""),
                         "folder_path": prefix.rstrip("/"),
                         "drive_id": drive_id,
                         "site_id": site_id,
@@ -392,6 +445,8 @@ async def sync_sharepoint_source(source_id: str) -> dict:
                 "site_id": f.get("site_id"),
                 "folder_path": f.get("folder_path", ""),
             }
+            if f.get("web_url"):
+                meta["sharepoint_web_url"] = f.get("web_url")
             doc_id = f.get("id") or fn
             n = add_documents(
                 collection_id,

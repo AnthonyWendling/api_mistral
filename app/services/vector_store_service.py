@@ -177,6 +177,8 @@ def list_documents(collection_id: str, limit_chunks: int = 2000) -> list[dict]:
             doc["drive_id"] = meta["drive_id"]
         if meta.get("site_id"):
             doc["site_id"] = meta["site_id"]
+        if meta.get("sharepoint_web_url"):
+            doc["sharepoint_web_url"] = meta["sharepoint_web_url"]
         if meta.get("nocodb_record_id"):
             doc["nocodb_record_id"] = meta["nocodb_record_id"]
         if meta.get("nocodb_table_name"):
